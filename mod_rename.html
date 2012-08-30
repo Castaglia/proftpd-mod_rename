@@ -1,0 +1,272 @@
+<!-- $Id: mod_rename.html,v 1.2 2002/07/16 18:18:11 tj Exp tj $ -->
+<!-- $Source: /home/tj/proftpd/modules/doc/RCS/mod_rename.html,v $ -->
+
+<html>
+<head>
+<title>ProFTPD module mod_rename</title>
+</head>
+
+<body bgcolor=white>
+
+<hr><br>
+<center>
+<h2><b>ProFTPD module <code>mod_rename</code></b></h2>
+</center>
+<hr><br>
+
+This module is contained in the <code>mod_rename.c</code> file for
+ProFTPD 1.2, and is not compiled by default.  Comments on the
+<a href="#Usage">usage</a> of this module follow. Installation instructions
+are discussed <a href="#Installation">here</a>.
+
+<p>
+The most current version of <code>mod_rename</code> can be found at:
+<pre>
+  <a href="http://www.castaglia.org/proftpd/">http://www.castaglia.org/proftpd/</a>
+</pre>
+
+<h2>Author</h2>
+<p>
+Please contact TJ Saunders &lt;tj <i>at</i> castaglia.org&gt; with any
+questions, concerns, or suggestions regarding this module.
+
+<h2>Thanks</h2>
+<p>
+<i>2001-12-22</i>: Thanks to Terry Davis &lt;tdavis <i>at</i> birddog.com&gt; for all his help in developing this module
+
+<h2>Directives</h2>
+<ul>
+  <li><a href="#RenameEngine">RenameEngine</a>
+  <li><a href="#RenameFilter">RenameFilter</a>
+  <li><a href="#RenameLog">RenameLog</a>
+  <li><a href="#RenamePrefix">RenamePrefix</a>
+  <li><a href="#RenameSuffix">RenameSuffix</a>
+  <li><a href="#RenameTarget">RenameTarget</a>
+</ul>
+
+<hr>
+<h2><a name="RenameEngine">RenameEngine</a></h2>
+<strong>Syntax:</strong> RenameEngine <em>on|off</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.2.2 and later
+
+<p>
+The <code>RenameEngine</code> directive turns on or off
+<code>mod_rename</code>'s renaming engine.  Use this directive to disable the
+module, rather than commenting all <code>mod_rewrite</code> directives.
+
+<p>
+<hr>
+<h2><a name="RenameFilter">RenameFilter</a></h2>
+<strong>Syntax:</strong> RenameFilter <em>regex|&quot;duplicate&quot;|&quot;none&quot; [filter-opts]</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.2.2 and later
+
+<p>
+The <code>RenameFilter</code> directive is used to configure a regular
+expression that the name of a file being uploaded must match in order to
+qualify for renaming.  If no <code>RenameFilter</code> is given, all uploaded
+files are eligible to be renamed.
+
+<p>
+If the special filter &quot;duplicate&quot; is used, it means to apply the
+renaming rules to the uploaded file only if that filename is a duplicate of an
+already existing filename in that directory.
+
+<p>
+If the special filter &quot;none&quot; is used, it means that no filter must be
+matched for the renaming rules to apply to uploaded files.  This is used to
+remove any <code>RenameFilter</code>s inherited from parent directories.
+
+<p>
+The optional <em>filter-opts</em> parameter can be used to configure the
+following filter options:
+<ul>
+  <li><b>IgnoreCase</b><br>
+    Regex evaluation and duplicate searching will be case-insensitive<br>
+  </li>
+</ul>
+
+<p>
+See Also: <a href="#RenameTarget"><code>RenameTarget</code></a>
+
+<p>
+<hr>
+<h2><a name="RenameLog">RenameLog</a></h2>
+<strong>Syntax:</strong> RenameLog <em>file|&quot;none&quot;</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.2.2 and later
+
+<p>
+The <code>RenameLog</code> directive is used to specify a log file for
+<code>mod_rename</code>'s reporting on a per-server basis.  The <em>file</em>
+parameter given must be the full path to the file to use for logging.
+
+<p>
+If no log file is given, the module will log messages at debug level 3.  If
+the <em>file</em> given is &quot;none&quot;, no logging will be done at all;
+this setting can be used to override a <code>RenameLog</code> inherited from a
+<code>&lt;Global&gt;</code> context.
+
+<p>
+<hr>
+<h2><a name="RenamePrefix">RenamePrefix</a></h2>
+<strong>Syntax:</strong> RenamePrefix <em>text|&quot;none&quot;</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.2.2 and later
+
+<p>
+The <code>RenamePrefix</code> directive is used to specify some <em>text</em>
+that will be prepended to the name to which an eligible file is renamed
+(<i>e.g.</i> &quot;/home/bob/tmpfile&quot; would become
+&quot;/home/bob/new.tmpfile&quot; if <code>&quot;RenamePrefix new.&quot;</code>
+was configured).
+
+<p>
+The special character <code>~</code> may be used in <em>text</em>.  It will be
+expanded to the current username when files are renamed.
+
+<p>
+The special character <code>#</code> may be used in <em>text</em>.  It will be
+expanded to a number when file are renamed.  This number is determined as
+follows: if a file of the name that <code>mod_rename</code> wants to use
+already exists, <code>#</code> will be set to &quot;1&quot;.  For example,
+with <code>RenamePrefix #.</code>, if file &quot;foo&quot; is uploaded (and
+already exists in the destination directory), the module will attempt to
+rename the file to &quot;1.foo&quot;.  The next time file &quot;foo&quot; is
+uploaded, it will be renamed to &quot;2.foo&quot; (assuming that file
+&quot;1.foo&quot; has not been deleted in the meantime).
+
+<p>
+<hr>
+<h2><a name="RenameSuffix">RenameSuffix</a></h2>
+<strong>Syntax:</strong> RenameSuffix <em>text|&quot;none&quot;</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.2.2 and later
+
+<p>
+The <code>RenameSuffix</code> directive is used to specify some <em>text</em>
+that will be apppended to the name of the file to which an eligible file is
+renamed (<i>e.g.</i> &quot;/home/bob/tmpfile&quot; would become
+&quot;/home/bob/tmpfile.renamed&quot; if
+<code>&quot;RenameSuffix .renamed&quot;</code> was configured).
+
+<p>
+The special character <code>~</code> may be used in <em>text</em>.  It will be
+expanded to the current username when files are renamed.
+
+<p>
+The special character <code>#</code> may be used in <em>text</em>.  It will be
+expanded to a number when the file is renamed.  This number is determined as
+follows: if a file of the name that <code>mod_rename</code> wants to use
+already exists, <code>#</code> will be set to &quot;1&quot;.  For example,
+with <code>RenameSuffix .#</code>, if file &quot;foo&quot; is uploaded (and
+already exists in the destination directory), the module will attempt to
+rename the file to name &quot;foo.1&quot;.  The next time file &quot;foo&quot;
+is uploaded, it will be renamed to &quot;foo.2&quot; (assuming that file
+&quot;foo.1&quot; has not been deleted in the meantime).
+
+<p>
+<hr>
+<h2><a name="RenameTarget">RenameTarget</a></h2>
+<strong>Syntax:</strong> RenameTarget <em>&quot;user&quot;|&quot;group&quot;|&quot;class&quot; expression</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.2.2 and later
+
+<p>
+The <code>RenameTarget</code> directive is used to restrict the application of
+the renaming rules only to specific users.  If the &quot;user&quot;
+restriction is given, then expression is a user-expression specifying which
+users' files will be renamed.  Similarly for the &quot;group&quot;
+restriction.  For the &quot;class&quot; restriction, the expression is simply
+the (single) name of the connection Class on which renaming will be used.
+
+<p>
+In the case of multiple <code>RenameTarget</code> directives for a single
+directory, each with a different restriction, the restrictions will be applied
+in the following order of precedence: &quot;user&quot;, then
+&quot;group&quot;, then &quot;class&quot;.  If no restriction was used,
+renaming will apply to everyone.  If this sort of functionality is desired, it
+is best to write directives in this order (see example).
+
+<p>
+Example:
+<pre>
+  # These renaming rules are only to apply to MP3 files.
+  RenameFilter \.mp3$
+
+  # Rename files for everyone but user bob
+  RenameTarget user !bob
+
+  # Add a suffix to all files being renamed
+  RenameSuffix .untrusted
+</pre>
+
+<p>
+See Also: <a href="#RenameFilter"><code>RenameFilter</code></a>,
+  <a href="#RenamePrefix"><code>RenamePrefix</code></a>,
+  <a href="#RenameSuffix"><code>RenameSuffix</code></a>
+
+<p>
+<hr><br>
+<h2><a name="Usage">Usage</a></h2>
+This module has absolutely no connection to the <code>RNFR</code> or
+<code>RNTO</code> FTP commands.  It works by adjusting the name of the file
+being <code>STOR</code>ed by the client behind the scenes, before the transfer
+of the content of the file has started.  One of the consequences is that the
+renamed path <i>may</i> run afoul of any configured <code>AllowFilter</code>,
+<code>DenyFilter</code>, <code>PathAllowFilter</code>, or
+<code>PathDenyFilter</code> directives, causing unexpected or unwanted
+problems.  Please keep this in mind when configuring prefices and suffices.
+
+<p>
+In the case where both <code>RenamePrefix</code> and <code>RenameSuffix</code>
+are configured, <i>and</i> both configured strings contain the special
+<code>#</code> character, <i>and</i> a file of the name to use exists, both
+occurrences of <code>#</code> will be incremented.
+
+<p>
+<hr><br>
+<h2><a name="Installation">Installation</a></h2>
+To install <code>mod_rename</code>, copy the <code>mod_rename.c</code> file into
+<pre>
+  <i>proftpd-dir</i>/contrib/
+</pre>
+after unpacking the latest proftpd-1.2 source code.  Then follow the usual
+steps for using third-party modules in proftpd:
+<pre>
+  ./configure --with-modules=mod_rename
+  make
+  make install
+</pre>
+
+<p>
+<hr><br>
+
+Author: <i>$Author: tj $</i><br>
+Last Updated: <i>$Date: 2002/07/16 18:18:11 $</i><br>
+
+<br><hr>
+
+<font size=2><b><i>
+&copy; Copyright 2000-2002 TJ Saunders<br>
+ All Rights Reserved<br>
+</i></b></font>
+
+<hr><br>
+
+</body>
+</html>
+
