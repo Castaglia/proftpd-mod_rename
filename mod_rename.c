@@ -1,7 +1,7 @@
 /*
  * ProFTPD: mod_rename -- a module for automatically renaming uploaded files
  *
- * Copyright (c) 2001-2006 TJ Saunders
+ * Copyright (c) 2001-2012 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,11 +30,11 @@
 #include "conf.h"
 #include "privs.h"
 
-#define MOD_RENAME_VERSION "mod_rename/0.17"
+#define MOD_RENAME_VERSION "mod_rename/0.2"
 
 /* Make sure the version of proftpd is as necessary. */
-#if PROFTPD_VERSION_NUMBER < 0x0001021001
-# error "ProFTPD 1.2.10rc1 or later required"
+#if PROFTPD_VERSION_NUMBER < 0x0001030401
+# error "ProFTPD 1.3.4rc1 or later required"
 #endif
 
 #ifdef HAVE_REGEX_H
@@ -44,11 +44,10 @@
 module rename_module;
 
 /* for logging */
-static char *rename_logfile = NULL;
 static int rename_logfd = -1;
 
 /* Module variables */
-static unsigned char rename_engine = FALSE;
+static int rename_engine = FALSE;
 
 /* Necessary prototypes
  */
@@ -209,7 +208,7 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   int res;
 
 #if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
-  static regex_t *rename_regex = NULL;
+  static pr_regex_t *rename_regex = NULL;
   static char *rename_filter = NULL;
 #endif
 
@@ -230,7 +229,7 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
       "using RenameFilter %s", rename_filter);
 
     /* Test the filter string: is it "none" or "duplicate"? */
-    if (strcmp(rename_filter, "none") == 0) {
+    if (strncmp(rename_filter, "none", 5) == 0) {
       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
         "RenameFilter none: all files are eligible for renaming");
 
@@ -253,85 +252,49 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
       }
 
     } else {
-      rename_regex = (regex_t *) c->argv[0];
+      rename_regex = (pr_regex_t *) c->argv[0];
 
       /* Do not rename the file if it does not match the filter.  Use only
        * the file name (file), not the full path (path), for the
        * regex comparison.
        */
-      if (rename_regex && file) {
-        res = regexec(rename_regex, file, 0, NULL, 0);
+      if (rename_regex != NULL &&
+          file != NULL) {
+        res = pr_regexp_exec(rename_regex, file, 0, NULL, 0, 0, 0);
         if (res != 0) {
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-            "RenameFilter %s: filename '%s' does not match",
-            rename_filter, file);
+            "RenameFilter %s: filename '%s' does not match", rename_filter,
+            file);
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
             "RenameFilter %s: not renaming file", rename_filter);
           return NULL;
 
         } else {
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-            "RenameFilter %s: file '%s' matches",
-            rename_filter, file);
+            "RenameFilter %s: file '%s' matches", rename_filter, file);
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
             "RenameFilter %s: renaming file", rename_filter);
         }
       }
     }
 
-  } else
+  } else {
      (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
        "no RenameFilter set: all files are eligible for renaming");
+  }
 #endif
 
-  c = find_config(CURRENT_CONF, CONF_PARAM, "RenameTarget", FALSE);
-  if (c != NULL) {
-
-    if (strcmp(c->argv[0], "user") == 0) {
-      if (pr_expr_eval_user_or((char **) &c->argv[1]))
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "current user '%s' matches RenameTarget", session.user);
-
-      else {
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "current user '%s' does not match RenameTarget", session.user);
-        return NULL;
-      }
-
-    } else if (strcmp(c->argv[0], "group") == 0) {
-      if (pr_expr_eval_group_and((char **) &c->argv[1]))
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "current group(s) match RenameTarget");
-
-      else {
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, 
-          "current group(s) do not match RenameTarget");
-        return NULL; 
-      }
-
-    } else if (strcmp(c->argv[0], "class") == 0) {
-      if (pr_expr_eval_class_or((char **) &c->argv[1]))
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "current class '%s' matches RenameTarget", session.class->cls_name);
-
-      else {
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "current class '%s' does not match RenameTarget",
-          session.class->cls_name);
-        return NULL;
-      }
-    }
-  }
-
   rename_prefix = get_param_ptr(CURRENT_CONF, "RenamePrefix", FALSE);
-  if (rename_prefix)
+  if (rename_prefix) {
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "using RenamePrefix '%s'", rename_prefix);
+  }
 
   rename_suffix = get_param_ptr(CURRENT_CONF, "RenameSuffix", FALSE);
-  if (rename_suffix)
+  if (rename_suffix) {
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "using RenameSuffix '%s'", rename_suffix);
+  }
 
   /* Build the filename to which the file is to be renamed.  This function
    * handles all the special characters in prefix/suffix strings.
@@ -357,8 +320,9 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   rename_path = rename_fixup_path(tmp_pool, dir, file, rename_prefix,
     rename_suffix);
 
-  if (tmp)
+  if (tmp != NULL) {
     *tmp = '/';
+  }
 
   return rename_path;
 }
@@ -440,24 +404,20 @@ static unsigned char rename_isdup(char *full_path, char *rel_path, char *opts) {
 }
 
 static int rename_openlog(void) {
+  char *log_file;
   int res = 0;
 
-  /* Sanity checks */
-  if (rename_logfile)
+  log_file = get_param_ptr(main_server->conf, "RenameLog", FALSE);
+  if (log_file == NULL)
     return 0;
 
-  rename_logfile = get_param_ptr(main_server->conf, "RenameLog", FALSE);
-  if (rename_logfile == NULL)
-    return 0;
-
-  if (strcasecmp(rename_logfile, "none") != 0) {
-    rename_logfile = NULL;
+  if (strcasecmp(log_file, "none") != 0) {
     return 0;
   }
 
   pr_signals_block();
   PRIVS_ROOT
-  res = pr_log_openfile(rename_logfile, &rename_logfd, 0640);
+  res = pr_log_openfile(log_file, &rename_logfd, 0600);
   PRIVS_RELINQUISH
   pr_signals_unblock();
 
@@ -465,21 +425,8 @@ static int rename_openlog(void) {
 }
 
 static void rename_closelog(void) {
-
-  /* sanity check */
-  if (rename_logfd < 0)
-    return;
-
-  if (close(rename_logfd) < 0) {
-    pr_log_pri(PR_LOG_ERR, MOD_RENAME_VERSION
-      ": error closing RenameLog '%s': %s", rename_logfile, strerror(errno));
-    return;
-  }
-
-  rename_logfile = NULL;
+  (void) close(rename_logfd);
   rename_logfd = -1;
-
-  return;
 }
 
 /* Note: this implementation of scandir(3) is made necessary because of
@@ -557,33 +504,37 @@ MODRET set_renameengine(cmd_rec *cmd) {
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
 
   bool = get_boolean(cmd, 1);
-  if (bool == -1)
+  if (bool == -1) {
     CONF_ERROR(cmd, "expecting boolean argument");
+  }
 
   /* Check for duplicates */
-  if (get_param_ptr(cmd->server->conf, cmd->argv[0], FALSE) != NULL)
+  if (get_param_ptr(cmd->server->conf, cmd->argv[0], FALSE) != NULL) {
     CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, cmd->argv[0], ": multiple "     
      "instances not allowed for same server", NULL));
+  }
 
   c = add_config_param(cmd->argv[0], 1, NULL);
-  c->argv[0] = pcalloc(c->pool, sizeof(unsigned char));
-  *((unsigned char *) c->argv[0]) = bool;
+  c->argv[0] = pcalloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = bool;
 
-  return HANDLED(cmd);
+  return PR_HANDLED(cmd);
 }
 
 MODRET set_renamefilter(cmd_rec *cmd) {
 #if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
   config_rec *c = NULL;
-  regex_t *preg = NULL;
+  pr_regex_t *pre = NULL;
   int reg_cflags = REG_EXTENDED|REG_NOSUB;
   int res;
 
-  if (cmd->argc-1 < 1 || cmd->argc-1 > 2)
+  if (cmd->argc-1 < 1 || cmd->argc-1 > 2) {
     CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
   CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
 
-  preg = pr_regexp_alloc();
+  pre = pr_regexp_alloc(&rename_module);
 
   if (strcmp(cmd->argv[1], "duplicate") != 0&&
       strcmp(cmd->argv[1], "none") != 0) {
@@ -591,11 +542,12 @@ MODRET set_renamefilter(cmd_rec *cmd) {
     if (cmd->argc-1 == 2 && !strcmp(cmd->argv[2], "IgnoreCase"))
       reg_cflags |= REG_ICASE;
  
-    if ((res = regcomp(preg, cmd->argv[1], reg_cflags)) != 0) {
+    res = pr_regexp_compile(pre, cmd->argv[1], reg_cflags);
+    if (res != 0) {
       char errstr[200] = {'\0'};
 
-      regerror(res, preg, errstr, sizeof(errstr));
-      pr_regexp_free(preg);
+      pr_regexp_error(res, pre, errstr, sizeof(errstr));
+      pr_regexp_free(&rename_module, pre);
 
       CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unable to compile '",
         cmd->argv[1], "' regex: ", errstr, NULL));
@@ -603,14 +555,15 @@ MODRET set_renamefilter(cmd_rec *cmd) {
   }
 
   c = add_config_param(cmd->argv[0], 3, NULL, NULL, NULL);
-  c->argv[0] = (void *) preg;
+  c->argv[0] = (void *) pre;
   c->argv[1] = pstrdup(c->pool, cmd->argv[1]);
 
-  if (cmd->argc-1 == 2)
+  if (cmd->argc-1 == 2) {
     c->argv[2] = pstrdup(c->pool, cmd->argv[2]);
+  }
 
   c->flags |= CF_MERGEDOWN;
-  return HANDLED(cmd);
+  return PR_HANDLED(cmd);
 #else /* no regex support */
   CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "The ", cmd->argv[0], " directive "
     "cannot be used on this system, as you do not have POSIX-compliant "
@@ -623,13 +576,14 @@ MODRET set_renamelog(cmd_rec *cmd) {
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
 
   /* Check for non-absolute paths */
-  if (strcasecmp(cmd->argv[1], "none") != 0 && *(cmd->argv[1]) != '/')
+  if (strncasecmp(cmd->argv[1], "none", 5) != 0 &&
+      *(cmd->argv[1]) != '/') {
     CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, cmd->argv[0], ": absolute path "
       "required", NULL));
+  }
 
   add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
-
-  return HANDLED(cmd);
+  return PR_HANDLED(cmd);
 }
 
 MODRET set_renameprefix(cmd_rec *cmd) {
@@ -638,13 +592,15 @@ MODRET set_renameprefix(cmd_rec *cmd) {
   CHECK_ARGS(cmd, 1);
   CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
 
-  if (strcmp(cmd->argv[1], "none") != 0)
+  if (strncasecmp(cmd->argv[1], "none", 5) != 0) {
     c = add_config_param_str(cmd->argv[0], 1, (void *) cmd->argv[1]);
-  else
+
+  } else {
     c = add_config_param(cmd->argv[0], 1, NULL);
+  }
 
   c->flags |= CF_MERGEDOWN;
-  return HANDLED(cmd);
+  return PR_HANDLED(cmd);
 }
 
 MODRET set_renamesuffix(cmd_rec *cmd) {
@@ -653,60 +609,15 @@ MODRET set_renamesuffix(cmd_rec *cmd) {
   CHECK_ARGS(cmd, 1);
   CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
 
-  if (strcmp(cmd->argv[1], "none") != 0)
+  if (strncasecmp(cmd->argv[1], "none", 5) != 0) {
     c = add_config_param_str(cmd->argv[0], 1, (void *) cmd->argv[1]);
-  else
+
+  } else {
     c = add_config_param(cmd->argv[1], 1, NULL);
-
-  c->flags |= CF_MERGEDOWN;
-  return HANDLED(cmd);
-}
-
-MODRET set_renametarget(cmd_rec *cmd) {
-  config_rec *c = NULL;
-  array_header *acl = NULL;
-  int argc = cmd->argc - 2;
-  char **argv = cmd->argv + 1;
-
-  CHECK_ARGS(cmd, 2);
-  CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
-
-  if (strcmp(cmd->argv[1], "user") != 0 &&
-      strcmp(cmd->argv[1], "group") != 0 &&
-      strcmp(cmd->argv[1], "class") != 0)
-    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, ": unknown classifier used: '",
-      cmd->argv[1], "'", NULL));
-
-  acl = pr_parse_expression(cmd->tmp_pool, &argc, argv);
-
-  c = add_config_param(cmd->argv[0], 0);
-  c->argc = argc + 2;
-
-  /* Add 2 to argc for the argv of the config_rec: one for the classifier,
-   * and one for the terminating NULL
-   */
-  c->argv = pcalloc(c->pool, ((argc + 3) * sizeof(char *)));
-
-  /* Capture the config_rec's argv pointer for doing the by-hand population
-   */
-  argv = (char **) c->argv;
-
-  /* Copy in the classifier */
-  *argv++ = pstrdup(c->pool, cmd->argv[1]);
-
-  /* Now, copy in the expression arguments */
-  if (argc && acl) {
-    while (argc--) {
-      *argv++ = pstrdup(c->pool, *((char **) acl->elts));
-      acl->elts = ((char **) acl->elts) + 1;
-    }
   }
 
-  /* Don't forget the terminating NULL */
-  *argv = NULL;
-
   c->flags |= CF_MERGEDOWN;
-  return HANDLED(cmd);
+  return PR_HANDLED(cmd);
 }
 
 /* Command handlers
@@ -717,11 +628,17 @@ MODRET rename_pre_stor(cmd_rec *cmd) {
   char *full_path = NULL;
   config_rec *prev_dir_config = session.dir_config;
 
-  /* Is RenameEngine on? */
-  if (!rename_engine)
-    return DECLINED(cmd);
+pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d, looking at %s", rename_engine, cmd->arg);
 
+  /* Is RenameEngine on? */
+  if (rename_engine == FALSE) {
+pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d, declining", rename_engine);
+    return PR_DECLINED(cmd);
+  }
+
+pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d, handling %s", rename_engine, cmd->arg);
   full_path = dir_abs_path(cmd->tmp_pool, cmd->arg, FALSE);
+(void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: looking for path %s (from %s)", full_path, cmd->arg);
 
   /* Make sure the appropriate dir_config is set for this path */
   session.dir_config = dir_match_path(cmd->tmp_pool, full_path);
@@ -730,6 +647,8 @@ MODRET rename_pre_stor(cmd_rec *cmd) {
    * uploaded, and adjust the STOR command behind the client's back
    */
   rename_path = rename_get_new_path(cmd->tmp_pool, cmd->arg, full_path);
+(void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: calculated rename path '%s'", rename_path);
+
   if (rename_path) {
 
     /* Is the renamed path different from the original?  It's possible that
@@ -753,7 +672,7 @@ MODRET rename_pre_stor(cmd_rec *cmd) {
   }
 
   session.dir_config = prev_dir_config;
-  return DECLINED(cmd);
+  return PR_DECLINED(cmd);
 }
 
 /* Event handlers
@@ -767,16 +686,17 @@ static void rename_exit_ev(const void *event_data, void *user_data) {
  */
 
 static int rename_sess_init(void) {
-  unsigned char *tmp = NULL;
+  config_rec *c;
 
   /* Is RenameEngine on? */
-  tmp = get_param_ptr(main_server->conf, "RenameEngine", FALSE);
-  if (tmp != NULL &&
-      *tmp == TRUE) {
-    rename_engine = TRUE;
+  c = find_config(main_server->conf, CONF_PARAM, "RenameEngine", FALSE);
+  if (c != NULL) {
+    rename_engine = *((int *) c->argv[0]);
+  }
 
-  } else {
-    rename_engine = FALSE;
+pr_log_debug(DEBUG0, MOD_RENAME_VERSION ": sess_init: rename_engine = %d", rename_engine);
+
+  if (rename_engine == FALSE) {
     return 0;
   }
 
@@ -798,12 +718,11 @@ static conftable rename_conftab[] = {
   { "RenameLog",	set_renamelog,		NULL },
   { "RenamePrefix",	set_renameprefix,	NULL },
   { "RenameSuffix",	set_renamesuffix,	NULL },
-  { "RenameTarget",	set_renametarget,	NULL },
   { NULL }
 };
 
 static cmdtable rename_cmdtab[] = {
-  { PRE_CMD, C_STOR, G_NONE, rename_pre_stor, FALSE, FALSE },
+  { PRE_CMD,	C_STOR,	G_NONE,	rename_pre_stor, FALSE, FALSE },
   { 0, NULL }
 };
 
