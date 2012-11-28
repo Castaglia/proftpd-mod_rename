@@ -15,7 +15,7 @@
 <hr><br>
 
 This module is contained in the <code>mod_rename.c</code> file for
-ProFTPD 1.2, and is not compiled by default.  Comments on the
+ProFTPD 1.3.<i>x</i>, and is not compiled by default.  Comments on the
 <a href="#Usage">usage</a> of this module follow. Installation instructions
 are discussed <a href="#Installation">here</a>.
 
@@ -41,7 +41,6 @@ questions, concerns, or suggestions regarding this module.
   <li><a href="#RenameLog">RenameLog</a>
   <li><a href="#RenamePrefix">RenamePrefix</a>
   <li><a href="#RenameSuffix">RenameSuffix</a>
-  <li><a href="#RenameTarget">RenameTarget</a>
 </ul>
 
 <hr>
@@ -55,7 +54,7 @@ questions, concerns, or suggestions regarding this module.
 <p>
 The <code>RenameEngine</code> directive turns on or off
 <code>mod_rename</code>'s renaming engine.  Use this directive to disable the
-module, rather than commenting all <code>mod_rewrite</code> directives.
+module, rather than commenting all <code>mod_rename</code> directives.
 
 <p>
 <hr>
@@ -90,9 +89,6 @@ following filter options:
     Regex evaluation and duplicate searching will be case-insensitive<br>
   </li>
 </ul>
-
-<p>
-See Also: <a href="#RenameTarget"><code>RenameTarget</code></a>
 
 <p>
 <hr>
@@ -177,49 +173,6 @@ is uploaded, it will be renamed to &quot;foo.2&quot; (assuming that file
 &quot;foo.1&quot; has not been deleted in the meantime).
 
 <p>
-<hr>
-<h2><a name="RenameTarget">RenameTarget</a></h2>
-<strong>Syntax:</strong> RenameTarget <em>&quot;user&quot;|&quot;group&quot;|&quot;class&quot; expression</em><br>
-<strong>Default:</strong> None<br>
-<strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
-<strong>Module:</strong> mod_rename<br>
-<strong>Compatibility:</strong> 1.2.2 and later
-
-<p>
-The <code>RenameTarget</code> directive is used to restrict the application of
-the renaming rules only to specific users.  If the &quot;user&quot;
-restriction is given, then expression is a user-expression specifying which
-users' files will be renamed.  Similarly for the &quot;group&quot;
-restriction.  For the &quot;class&quot; restriction, the expression is simply
-the (single) name of the connection Class on which renaming will be used.
-
-<p>
-In the case of multiple <code>RenameTarget</code> directives for a single
-directory, each with a different restriction, the restrictions will be applied
-in the following order of precedence: &quot;user&quot;, then
-&quot;group&quot;, then &quot;class&quot;.  If no restriction was used,
-renaming will apply to everyone.  If this sort of functionality is desired, it
-is best to write directives in this order (see example).
-
-<p>
-Example:
-<pre>
-  # These renaming rules are only to apply to MP3 files.
-  RenameFilter \.mp3$
-
-  # Rename files for everyone but user bob
-  RenameTarget user !bob
-
-  # Add a suffix to all files being renamed
-  RenameSuffix .untrusted
-</pre>
-
-<p>
-See Also: <a href="#RenameFilter"><code>RenameFilter</code></a>,
-  <a href="#RenamePrefix"><code>RenamePrefix</code></a>,
-  <a href="#RenameSuffix"><code>RenameSuffix</code></a>
-
-<p>
 <hr><br>
 <h2><a name="Usage">Usage</a></h2>
 This module has absolutely no connection to the <code>RNFR</code> or
@@ -244,8 +197,8 @@ To install <code>mod_rename</code>, copy the <code>mod_rename.c</code> file into
 <pre>
   <i>proftpd-dir</i>/contrib/
 </pre>
-after unpacking the latest proftpd-1.2 source code.  Then follow the usual
-steps for using third-party modules in proftpd:
+after unpacking the latest proftpd-1.3.<i>x</i> source code.  Then follow the
+usual steps for using third-party modules in proftpd:
 <pre>
   ./configure --with-modules=mod_rename
   make
@@ -261,7 +214,7 @@ Last Updated: <i>$Date: 2002/07/16 18:18:11 $</i><br>
 <br><hr>
 
 <font size=2><b><i>
-&copy; Copyright 2000-2002 TJ Saunders<br>
+&copy; Copyright 2000-2012 TJ Saunders<br>
  All Rights Reserved<br>
 </i></b></font>
 
