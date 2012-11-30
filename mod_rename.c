@@ -229,11 +229,11 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
       "using RenameFilter %s", rename_filter);
 
     /* Test the filter string: is it "none" or "duplicate"? */
-    if (strncmp(rename_filter, "none", 5) == 0) {
+    if (strncasecmp(rename_filter, "none", 5) == 0) {
       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
         "RenameFilter none: all files are eligible for renaming");
 
-    } else if (strcmp(rename_filter, "duplicate") == 0) {
+    } else if (strncasecmp(rename_filter, "duplicate", 10) == 0) {
 
       if (!rename_isdup(full_path, path, rename_opts)) {
         (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
@@ -334,16 +334,17 @@ static unsigned char rename_dup_ignorecase = FALSE;
 static int rename_dup_scan(const struct dirent *d) {
   if (strcmp(d->d_name, ".") != 0 &&
       strcmp(d->d_name, "..") != 0) {
-     if (rename_dup_ignorecase &&
-         strcasecmp(d->d_name, rename_dup_file) == 0) {
-       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-         "[dup scan] '%s' matches '%s'", d->d_name, rename_dup_file);
-       return 1;
-     }
+    if (rename_dup_ignorecase &&
+        strcasecmp(d->d_name, rename_dup_file) == 0) {
+      (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+        "[dup.scan] '%s' matches '%s'", d->d_name, rename_dup_file);
+      return 1;
+    }
 
-     if (!rename_dup_ignorecase &&
-         strcmp(d->d_name, rename_dup_file) == 0)
-       return 1;
+    if (!rename_dup_ignorecase &&
+        strcmp(d->d_name, rename_dup_file) == 0) {
+      return 1;
+    }
   }
 
   return 0;
@@ -355,10 +356,13 @@ static unsigned char rename_isdup(char *full_path, char *rel_path, char *opts) {
   struct dirent **matches = NULL;
   int nmatches = 0;
 
-  if (opts && strcmp(opts, "IgnoreCase") == 0)
+  if (opts != NULL &&
+      strcasecmp(opts, "IgnoreCase") == 0) {
     rename_dup_ignorecase = TRUE;
-  else
+
+  } else {
     rename_dup_ignorecase = FALSE;
+  }
 
   /* Split the path to be used into directory and file components. */
   tmp = strrchr(dir, '/');
@@ -375,27 +379,30 @@ static unsigned char rename_isdup(char *full_path, char *rel_path, char *opts) {
   if (nmatches <= 0) {
     if (nmatches < 0 &&
         errno != 0) {
+      int xerrno = errno;
+
       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
         "[dup check] error while scanning of '%s': %s", dir,
-        strerror(errno));
+        strerror(xerrno));
     }
 
-    if (tmp)
+    if (tmp) {
       *tmp = '/';
-
-    return FALSE;
+    }
 
   } else {
 
     /* We don't really care about the matches found, just that matches _were_
      * found.
      */
-    while (nmatches--)
+    while (nmatches--) {
       free((void *) matches[nmatches]);
+    }
     free((void *) matches);
 
-    if (tmp)
+    if (tmp) {
       *tmp = '/';
+    }
 
     return TRUE;
   }
@@ -411,7 +418,7 @@ static int rename_openlog(void) {
   if (log_file == NULL)
     return 0;
 
-  if (strcasecmp(log_file, "none") != 0) {
+  if (strcasecmp(log_file, "none") == 0) {
     return 0;
   }
 
@@ -446,16 +453,18 @@ static void rename_closelog(void) {
  */
 
 static int rename_scandir(const char *dir, struct dirent ***namelist,
-    int (*select)(const struct dirent *),
-    int (*compar)(const void *, const void *)) {
+    int (*selector)(const struct dirent *),
+    int (*comparer)(const void *, const void *)) {
 
   DIR *d = NULL;
   struct dirent *dent = NULL;
   register int i = 0;
   size_t dentlen;
 
-  if ((d = opendir(dir)) == NULL)
-     return -1;
+  d = opendir(dir);
+  if (d == NULL) {
+    return -1;
+  }
 
   *namelist = NULL;
 
@@ -465,37 +474,43 @@ static int rename_scandir(const char *dir, struct dirent ***namelist,
    * scandir(3) function.
    */
   while ((dent = readdir(d)) != NULL) {
-    if (select == NULL || (select != NULL && (*select)(dent))) {
+    if (selector == NULL || (selector != NULL && (*selector)(dent))) {
       if ((*namelist = (struct dirent **) realloc((void *) (*namelist),
-          ((i+1) * sizeof(struct dirent *)))) == NULL)
+          ((i+1) * sizeof(struct dirent *)))) == NULL) {
         return -1;
+      }
 
       dentlen = sizeof(struct dirent) -
         sizeof(dent->d_name) + strlen(dent->d_name) + 1;
 
-      if (((*namelist)[i] = (struct dirent *) malloc(dentlen)) == NULL)
+      if (((*namelist)[i] = (struct dirent *) malloc(dentlen)) == NULL) {
         return -1;
+      }
 
       memcpy((*namelist)[i], dent, dentlen);
       i++;
     }
   }
 
-  if (closedir(d))
+  if (closedir(d)) {
     return -1;
+  }
 
-  if (i == 0)
+  if (i == 0) {
     return -1;
+  }
 
-  if (compar != NULL)
-    qsort((void *) (*namelist), i, sizeof(struct dirent *), compar);
-    
+  if (comparer != NULL) {
+    qsort((void *) (*namelist), i, sizeof(struct dirent *), comparer);
+  }
+ 
   return i;
 }
 
 /* Configuration directive handlers
  */
 
+/* usage: RenameEngine on|off */
 MODRET set_renameengine(cmd_rec *cmd) {
   int bool = 0;
   config_rec *c = NULL;
@@ -521,6 +536,7 @@ MODRET set_renameengine(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: RenameFilter pattern|"duplicate" [opts] */
 MODRET set_renamefilter(cmd_rec *cmd) {
 #if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
   config_rec *c = NULL;
@@ -539,8 +555,10 @@ MODRET set_renamefilter(cmd_rec *cmd) {
   if (strcmp(cmd->argv[1], "duplicate") != 0&&
       strcmp(cmd->argv[1], "none") != 0) {
    
-    if (cmd->argc-1 == 2 && !strcmp(cmd->argv[2], "IgnoreCase"))
+    if (cmd->argc-1 == 2 &&
+        strcasecmp(cmd->argv[2], "IgnoreCase") == 0) {
       reg_cflags |= REG_ICASE;
+    }
  
     res = pr_regexp_compile(pre, cmd->argv[1], reg_cflags);
     if (res != 0) {
@@ -571,6 +589,7 @@ MODRET set_renamefilter(cmd_rec *cmd) {
 #endif
 }
 
+/* usage: RenameLog path|"none" */
 MODRET set_renamelog(cmd_rec *cmd) {
   CHECK_ARGS(cmd, 1);
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
@@ -586,6 +605,7 @@ MODRET set_renamelog(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: RenamePrefix prefix|"none" */
 MODRET set_renameprefix(cmd_rec *cmd) {
   config_rec *c = NULL;
 
@@ -603,6 +623,7 @@ MODRET set_renameprefix(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: RenameSuffix suffix|"none" */
 MODRET set_renamesuffix(cmd_rec *cmd) {
   config_rec *c = NULL;
 
@@ -628,17 +649,12 @@ MODRET rename_pre_stor(cmd_rec *cmd) {
   char *full_path = NULL;
   config_rec *prev_dir_config = session.dir_config;
 
-pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d, looking at %s", rename_engine, cmd->arg);
-
   /* Is RenameEngine on? */
   if (rename_engine == FALSE) {
-pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d, declining", rename_engine);
     return PR_DECLINED(cmd);
   }
 
-pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d, handling %s", rename_engine, cmd->arg);
   full_path = dir_abs_path(cmd->tmp_pool, cmd->arg, FALSE);
-(void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: looking for path %s (from %s)", full_path, cmd->arg);
 
   /* Make sure the appropriate dir_config is set for this path */
   session.dir_config = dir_match_path(cmd->tmp_pool, full_path);
@@ -647,8 +663,6 @@ pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: rename_engine = %d
    * uploaded, and adjust the STOR command behind the client's back
    */
   rename_path = rename_get_new_path(cmd->tmp_pool, cmd->arg, full_path);
-(void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION, "pre_stor: calculated rename path '%s'", rename_path);
-
   if (rename_path) {
 
     /* Is the renamed path different from the original?  It's possible that
@@ -693,8 +707,6 @@ static int rename_sess_init(void) {
   if (c != NULL) {
     rename_engine = *((int *) c->argv[0]);
   }
-
-pr_log_debug(DEBUG0, MOD_RENAME_VERSION ": sess_init: rename_engine = %d", rename_engine);
 
   if (rename_engine == FALSE) {
     return 0;
