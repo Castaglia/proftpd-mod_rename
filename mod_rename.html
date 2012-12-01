@@ -22,7 +22,7 @@ are discussed <a href="#Installation">here</a>.
 <p>
 The most current version of <code>mod_rename</code> can be found at:
 <pre>
-  <a href="http://www.castaglia.org/proftpd/">http://www.castaglia.org/proftpd/</a>
+  <a href="https://github.com/Castaglia/proftpd-mod_rename">https://github.com/Castaglia/proftpd-mod_rename</a>
 </pre>
 
 <h2>Author</h2>
@@ -36,12 +36,25 @@ questions, concerns, or suggestions regarding this module.
 
 <h2>Directives</h2>
 <ul>
+  <li><a href="#RenameEngine">RenameEnable</a>
   <li><a href="#RenameEngine">RenameEngine</a>
   <li><a href="#RenameFilter">RenameFilter</a>
   <li><a href="#RenameLog">RenameLog</a>
   <li><a href="#RenamePrefix">RenamePrefix</a>
   <li><a href="#RenameSuffix">RenameSuffix</a>
 </ul>
+
+<hr>
+<h2><a name="RenameEnable">RenameEnable</a></h2>
+<strong>Syntax:</strong> RenameEnable <em>on|off</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> <code>&lt;Directory&gt;</code>, <code>.ftpaccess</code>
+<strong>Module:</strong> mod_rename<br>
+<strong>Compatibility:</strong> 1.3.4rc1 and later
+
+<p>
+The <code>RenameEnable</code> directive can be used to disable the renaming
+of files by <code>mod_rename</code> on a per-directory basis.
 
 <hr>
 <h2><a name="RenameEngine">RenameEngine</a></h2>
