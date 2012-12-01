@@ -69,7 +69,7 @@ static int rename_alphasort(const void *a, const void *b) {
 }
 
 static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
-    const char *file, char *prefix, char *suffix) {
+    const char *file, char *prefix, char *suffix, int isdup) {
   const char *rename_path = NULL;
 
   /* Handle ~s in the prefix/suffix strings */
@@ -106,7 +106,8 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
        * use the prefix/suffix.
        */
       tmp_path = pdircat(tmp_pool, dir, file, NULL);
-      if (pr_fsio_lstat(tmp_path, &st) != 0) {
+      if (!isdup &&
+          pr_fsio_lstat(tmp_path, &st) != 0) {
         rename_path = tmp_path;
         (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
           "[fixup]: no need for prefix/suffix, using '%s'", rename_path);
@@ -131,18 +132,20 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
           sprintf(suffixbuf, "%u", i);
           tmp_suffix = sreplace(tmp_pool, suffix, "#", suffixbuf, NULL);
 
-        } else
+        } else {
           tmp_suffix = suffix;
+        }
 
-        if (prefix && suffix)
+        if (prefix && suffix) {
           tmp_path = pstrcat(tmp_pool, dir, "/", tmp_prefix, file, tmp_suffix,
             NULL);
  
-        else if (prefix && !suffix)
+        } else if (prefix && !suffix) {
           tmp_path = pstrcat(tmp_pool, dir, "/", tmp_prefix, file, NULL);
 
-        else if (!prefix && suffix)
+        } else if (!prefix && suffix) {
           tmp_path = pstrcat(tmp_pool, dir, "/", file, tmp_suffix, NULL);
+        }
 
         /* Path exists...continue looking */
         (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
@@ -191,8 +194,9 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
       }
     }
 
-  } else
+  } else {
     rename_path = pdircat(tmp_pool, dir, file, NULL);
+  }
 
   (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
     "[fixup] final path: '%s'", rename_path);
@@ -205,7 +209,7 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   const char *rename_path = NULL;
   char *dir = NULL, *file = NULL, *rename_prefix = NULL, *rename_suffix = NULL,
     *rename_opts = NULL, *tmp = NULL;
-  int res;
+  int isdup = FALSE, res;
 
 #if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
   static pr_regex_t *rename_regex = NULL;
@@ -234,8 +238,8 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
         "RenameFilter none: all files are eligible for renaming");
 
     } else if (strncasecmp(rename_filter, "duplicate", 10) == 0) {
-
-      if (!rename_isdup(full_path, path, rename_opts)) {
+      isdup = rename_isdup(full_path, path, rename_opts);
+      if (!isdup) {
         (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
           "RenameFilter duplicate: path '%s' is not a duplicate",
           session.chroot_path ? path : full_path);
@@ -318,7 +322,7 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   }
 
   rename_path = rename_fixup_path(tmp_pool, dir, file, rename_prefix,
-    rename_suffix);
+    rename_suffix, isdup);
 
   if (tmp != NULL) {
     *tmp = '/';
@@ -510,6 +514,26 @@ static int rename_scandir(const char *dir, struct dirent ***namelist,
 /* Configuration directive handlers
  */
 
+/* usage: RenameEnable on|off */
+MODRET set_renameenable(cmd_rec *cmd) {
+  int bool = -1;
+  config_rec *c;
+
+  CHECK_ARGS(cmd, 1);
+  CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
+
+  bool = get_boolean(cmd, 1);
+  if (bool == -1) {
+    CONF_ERROR(cmd, "expected Boolean parameter");
+  }
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = palloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = bool;
+
+  return PR_HANDLED(cmd);
+}
+
 /* usage: RenameEngine on|off */
 MODRET set_renameengine(cmd_rec *cmd) {
   int bool = 0;
@@ -520,7 +544,7 @@ MODRET set_renameengine(cmd_rec *cmd) {
 
   bool = get_boolean(cmd, 1);
   if (bool == -1) {
-    CONF_ERROR(cmd, "expecting boolean argument");
+    CONF_ERROR(cmd, "expecting Boolean parameter");
   }
 
   /* Check for duplicates */
@@ -648,6 +672,7 @@ MODRET rename_pre_stor(cmd_rec *cmd) {
   const char *rename_path = NULL;
   char *full_path = NULL;
   config_rec *prev_dir_config = session.dir_config;
+  struct stat st;
 
   /* Is RenameEngine on? */
   if (rename_engine == FALSE) {
@@ -656,8 +681,32 @@ MODRET rename_pre_stor(cmd_rec *cmd) {
 
   full_path = dir_abs_path(cmd->tmp_pool, cmd->arg, FALSE);
 
+  /* Check for "TarEnable off" for this directory.  Make sure we check
+   * for any possible .ftpaccess files in the target directory which
+   * may contain a TarEnable configuration.
+   */
+  if (pr_fsio_lstat(full_path, &st) == 0) {
+    build_dyn_config(cmd->pool, full_path, &st, TRUE);
+  }
+
   /* Make sure the appropriate dir_config is set for this path */
   session.dir_config = dir_match_path(cmd->tmp_pool, full_path);
+  if (session.dir_config != NULL) {
+    config_rec *c;
+
+    c = find_config(session.dir_config->subset, CONF_PARAM, "RenameEnable",
+      FALSE);
+    if (c) {
+      int rename_enable;
+
+      rename_enable = *((int *) c->argv[0]);
+      if (rename_enable == FALSE) {
+        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+          "'RenameEnable off' found, skipping renaming of '%s'", full_path);
+        return PR_DECLINED(cmd);
+      }
+    }
+  }
 
   /* Determine what filename _should have been used_ for the file being
    * uploaded, and adjust the STOR command behind the client's back
@@ -725,6 +774,7 @@ static int rename_sess_init(void) {
  */
 
 static conftable rename_conftab[] = {
+  { "RenameEnable",	set_renameenable,	NULL },
   { "RenameEngine",	set_renameengine,	NULL },
   { "RenameFilter",	set_renamefilter,	NULL },
   { "RenameLog",	set_renamelog,		NULL },
