@@ -1,7 +1,7 @@
 /*
  * ProFTPD: mod_rename -- a module for automatically renaming uploaded files
  *
- * Copyright (c) 2001-2012 TJ Saunders
+ * Copyright (c) 2001-2014 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,15 +30,11 @@
 #include "conf.h"
 #include "privs.h"
 
-#define MOD_RENAME_VERSION "mod_rename/0.2"
+#define MOD_RENAME_VERSION "mod_rename/0.3"
 
 /* Make sure the version of proftpd is as necessary. */
-#if PROFTPD_VERSION_NUMBER < 0x0001030401
-# error "ProFTPD 1.3.4rc1 or later required"
-#endif
-
-#ifdef HAVE_REGEX_H
-#include <regex.h>
+#if PROFTPD_VERSION_NUMBER < 0x0001030402
+# error "ProFTPD 1.3.4rc2 or later required"
 #endif
 
 module rename_module;
@@ -69,7 +65,8 @@ static int rename_alphasort(const void *a, const void *b) {
 }
 
 static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
-    const char *file, char *prefix, char *suffix, int isdup) {
+    const char *file, int isdup, char *prefix, int prefix_max_count,
+    char *suffix, int suffix_max_count) {
   const char *rename_path = NULL;
 
   /* Handle ~s in the prefix/suffix strings */
@@ -101,6 +98,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
       register unsigned int i = 0;
       char prefixbuf[80] = {'\0'}, suffixbuf[80] = {'\0'};
       char *tmp_path = NULL, *tmp_prefix = NULL, *tmp_suffix = NULL;
+      int max_count = INT_MAX;
 
       /* If the file does not already exist as is, we don't need to
        * use the prefix/suffix.
@@ -114,46 +112,94 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
         return rename_path;
       }
 
+      /* Handle RenamePrefix/RenameSuffix max count of zero as a special
+       * case, to support the deleting of files that are about to be
+       * overwritten (Bug#4008).
+       */
+
+      if (prefix != NULL &&
+          prefix_max_count == 0) {
+        rename_path = tmp_path;
+
+        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+          "[fixup]: RenamePrefix '%s' has max count %d, deleting existing "
+          "file '%s'", prefix, prefix_max_count, rename_path);
+
+        if (pr_fsio_unlink(rename_path) < 0) {
+          (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+            "error deleting '%s': %s", rename_path, strerror(errno));
+        }
+
+        return rename_path;
+
+      } else if (suffix != NULL &&
+                 suffix_max_count == 0) {
+        rename_path = tmp_path;
+
+        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+          "[fixup]: RenameSuffix '%s' has max count %d, deleting existing "
+          "file '%s'", suffix, suffix_max_count, rename_path);
+        
+        if (pr_fsio_unlink(rename_path) < 0) {
+          (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+            "error deleting '%s': %s", rename_path, strerror(errno));
+        }
+
+        return rename_path;
+      }
+
       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
         "[fixup] checking for usable number token");
 
+      if (prefix_max_count > 0) {
+        max_count = prefix_max_count;
+
+      } else if (suffix_max_count > 0) {
+        max_count = suffix_max_count;
+      }
+ 
       /* Yuck.  Popular among users, but...yuck. */
-      for (i = 1; i < UINT_MAX; i++) {
+      for (i = 1; i < max_count; i++) {
         if (prefix_hasnumtok) {
           memset(prefixbuf, '\0', sizeof(prefixbuf));
-          sprintf(prefixbuf, "%u", i);
+          snprintf(prefixbuf, sizeof(prefixbuf)-1, "%u", i);
           tmp_prefix = sreplace(tmp_pool, prefix, "#", prefixbuf, NULL);
 
-        } else
+        } else {
           tmp_prefix = prefix;
+        }
 
         if (suffix_hasnumtok) {
           memset(suffixbuf, '\0', sizeof(suffixbuf));
-          sprintf(suffixbuf, "%u", i);
+          snprintf(suffixbuf, sizeof(suffixbuf)-1, "%u", i);
           tmp_suffix = sreplace(tmp_pool, suffix, "#", suffixbuf, NULL);
 
         } else {
           tmp_suffix = suffix;
         }
 
-        if (prefix && suffix) {
+        if (prefix != NULL &&
+            suffix != NULL) {
           tmp_path = pstrcat(tmp_pool, dir, "/", tmp_prefix, file, tmp_suffix,
             NULL);
  
-        } else if (prefix && !suffix) {
+        } else if (prefix != NULL &&
+                   suffix == NULL) {
           tmp_path = pstrcat(tmp_pool, dir, "/", tmp_prefix, file, NULL);
 
-        } else if (!prefix && suffix) {
+        } else if (prefix == NULL &&
+                   suffix != NULL) {
           tmp_path = pstrcat(tmp_pool, dir, "/", file, tmp_suffix, NULL);
         }
 
-        /* Path exists...continue looking */
         (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
           "[fixup] checking existence of rename path '%s'", tmp_path);
 
         pr_fs_clear_cache();
-        if (pr_fsio_lstat(tmp_path, &st) == 0)
+        if (pr_fsio_lstat(tmp_path, &st) == 0) {
+          /* Path exists; continue looking. */
           continue;
+        }
 
         /* Path does not exist -- done looking */
         if (errno == ENOENT) {
@@ -162,17 +208,17 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
           return tmp_path;
 
         } else {
-
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
             "error stat'ing '%s': %s", tmp_path, strerror(errno));
           rename_path = file;
+
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
             "[fixup] final path: '%s'", rename_path);
           return rename_path;
         }
       }
 
-      /* End of for loop reached (UINT_MAX) with no luck.  Bummer. */
+      /* End of for loop reached (INT_MAX) with no luck.  Bummer. */
       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
         "error: exhausted number token space");
       rename_path = file;
@@ -209,9 +255,9 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   const char *rename_path = NULL;
   char *dir = NULL, *file = NULL, *rename_prefix = NULL, *rename_suffix = NULL,
     *rename_opts = NULL, *tmp = NULL;
-  int isdup = FALSE, res;
+  int isdup = FALSE, prefix_max_count = -1, suffix_max_count = -1, res;
 
-#if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
+#ifdef PR_USE_REGEX
   static pr_regex_t *rename_regex = NULL;
   static char *rename_filter = NULL;
 #endif
@@ -224,7 +270,7 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
     "testing file '%s' for rename eligibility", full_path);
 
-#if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
+#ifdef PR_USE_REGEX
   c = find_config(CURRENT_CONF, CONF_PARAM, "RenameFilter", FALSE);
   if (c != NULL) {
     rename_filter = (char *) c->argv[1];
@@ -288,14 +334,20 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
   }
 #endif
 
-  rename_prefix = get_param_ptr(CURRENT_CONF, "RenamePrefix", FALSE);
-  if (rename_prefix) {
+  c = find_config(CURRENT_CONF, CONF_PARAM, "RenamePrefix", FALSE);
+  if (c != NULL) {
+    rename_prefix = c->argv[0];
+    prefix_max_count = *((int *) c->argv[1]);
+
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "using RenamePrefix '%s'", rename_prefix);
   }
 
-  rename_suffix = get_param_ptr(CURRENT_CONF, "RenameSuffix", FALSE);
-  if (rename_suffix) {
+  c = find_config(CURRENT_CONF, CONF_PARAM, "RenameSuffix", FALSE);
+  if (c != NULL) {
+    rename_suffix = c->argv[0];
+    suffix_max_count = *((int *) c->argv[1]);
+
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "using RenameSuffix '%s'", rename_suffix);
   }
@@ -321,8 +373,8 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
       "assuming '%s' is in directory '%s'", path, dir);
   }
 
-  rename_path = rename_fixup_path(tmp_pool, dir, file, rename_prefix,
-    rename_suffix, isdup);
+  rename_path = rename_fixup_path(tmp_pool, dir, file, isdup,
+    rename_prefix, prefix_max_count, rename_suffix, suffix_max_count);
 
   if (tmp != NULL) {
     *tmp = '/';
@@ -562,7 +614,7 @@ MODRET set_renameengine(cmd_rec *cmd) {
 
 /* usage: RenameFilter pattern|"duplicate" [opts] */
 MODRET set_renamefilter(cmd_rec *cmd) {
-#if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
+#ifdef PR_USE_REGEX
   config_rec *c = NULL;
   pr_regex_t *pre = NULL;
   int reg_cflags = REG_EXTENDED|REG_NOSUB;
@@ -629,36 +681,76 @@ MODRET set_renamelog(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
-/* usage: RenamePrefix prefix|"none" */
+/* usage: RenamePrefix prefix|"none" ["max" max-count] */
 MODRET set_renameprefix(cmd_rec *cmd) {
   config_rec *c = NULL;
 
-  CHECK_ARGS(cmd, 1);
+  if (cmd->argc != 2 &&
+      cmd->argc != 4) {
+    CONF_ERROR(cmd, "wrong number of parameters")
+  }
+
   CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
 
-  if (strncasecmp(cmd->argv[1], "none", 5) != 0) {
-    c = add_config_param_str(cmd->argv[0], 1, (void *) cmd->argv[1]);
+  c = add_config_param_str(cmd->argv[0], 2, NULL, NULL);
 
-  } else {
-    c = add_config_param(cmd->argv[0], 1, NULL);
+  if (strncasecmp(cmd->argv[1], "none", 5) != 0) {
+    int max_count = -1;
+
+    if (cmd->argc == 4) {
+      if (strncasecmp(cmd->argv[2], "max", 4) == 0) {
+        max_count = atoi(cmd->argv[3]);
+        if (max_count < 0) {
+          CONF_ERROR(cmd, "max count must be zero or greater")
+        }
+
+      } else {
+        CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unknown/unsupported keyword: ",
+          cmd->argv[2], NULL));
+      }
+    }
+
+    c->argv[0] = pstrdup(c->pool, cmd->argv[1]);
+    c->argv[1] = palloc(c->pool, sizeof(int));
+    *((int *) c->argv[1]) = max_count;
   }
 
   c->flags |= CF_MERGEDOWN;
   return PR_HANDLED(cmd);
 }
 
-/* usage: RenameSuffix suffix|"none" */
+/* usage: RenameSuffix suffix|"none" ["max" max-count] */
 MODRET set_renamesuffix(cmd_rec *cmd) {
   config_rec *c = NULL;
 
-  CHECK_ARGS(cmd, 1);
+  if (cmd->argc != 2 &&
+      cmd->argc != 4) {
+    CONF_ERROR(cmd, "wrong number of parameters")
+  }
+
   CHECK_CONF(cmd, CONF_DIR|CONF_DYNDIR);
 
-  if (strncasecmp(cmd->argv[1], "none", 5) != 0) {
-    c = add_config_param_str(cmd->argv[0], 1, (void *) cmd->argv[1]);
+  c = add_config_param_str(cmd->argv[0], 2, NULL, NULL);
 
-  } else {
-    c = add_config_param(cmd->argv[1], 1, NULL);
+  if (strncasecmp(cmd->argv[1], "none", 5) != 0) {
+    int max_count = -1;
+
+    if (cmd->argc == 4) {
+      if (strncasecmp(cmd->argv[2], "max", 4) == 0) {
+        max_count = atoi(cmd->argv[3]);
+        if (max_count < 0) {
+          CONF_ERROR(cmd, "max count must be zero or greater")
+        }
+
+      } else {
+        CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unknown/unsupported keyword: ",
+          cmd->argv[2], NULL));
+      }
+    }
+
+    c->argv[0] = pstrdup(c->pool, cmd->argv[1]);
+    c->argv[1] = palloc(c->pool, sizeof(int));
+    *((int *) c->argv[1]) = max_count;
   }
 
   c->flags |= CF_MERGEDOWN;
