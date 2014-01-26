@@ -126,7 +126,7 @@ this setting can be used to override a <code>RenameLog</code> inherited from a
 <p>
 <hr>
 <h2><a name="RenamePrefix">RenamePrefix</a></h2>
-<strong>Syntax:</strong> RenamePrefix <em>text|&quot;none&quot;</em><br>
+<strong>Syntax:</strong> RenamePrefix <em>text|&quot;none&quot;</em> <em>[&quot;max&quot; count]</em><br>
 <strong>Default:</strong> None<br>
 <strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
 <strong>Module:</strong> mod_rename<br>
@@ -155,9 +155,18 @@ uploaded, it will be renamed to &quot;2.foo&quot; (assuming that file
 &quot;1.foo&quot; has not been deleted in the meantime).
 
 <p>
+<b>Note</b> that when the <code>#</code> character is used, a maximum
+<em>count</em> of renamed copies can be specified, <i>e.g.</i>:
+<pre>
+  RenamePrefix #. max 10
+</pre>
+A <em>count</em> value of zero can be used to have the existing file
+<em>deleted</em>, rather than being renamed or overwritten.
+
+<p>
 <hr>
 <h2><a name="RenameSuffix">RenameSuffix</a></h2>
-<strong>Syntax:</strong> RenameSuffix <em>text|&quot;none&quot;</em><br>
+<strong>Syntax:</strong> RenameSuffix <em>text|&quot;none&quot;</em> <em>[&quot;max&quot; count]</em<br>
 <strong>Default:</strong> None<br>
 <strong>Context:</strong> <code>&lt;Directory&gt;</code>, .ftpaccess<br>
 <strong>Module:</strong> mod_rename<br>
@@ -184,6 +193,15 @@ already exists in the destination directory), the module will attempt to
 rename the file to name &quot;foo.1&quot;.  The next time file &quot;foo&quot;
 is uploaded, it will be renamed to &quot;foo.2&quot; (assuming that file
 &quot;foo.1&quot; has not been deleted in the meantime).
+
+<p>
+<b>Note</b> that when the <code>#</code> character is used, a maximum
+<em>count</em> of renamed copies can be specified, <i>e.g.</i>:
+<pre>
+  RenameSuffix #. max 10
+</pre>
+A <em>count</em> value of zero can be used to have the existing file
+<em>deleted</em>, rather than being renamed or overwritten.
 
 <p>
 <hr>
