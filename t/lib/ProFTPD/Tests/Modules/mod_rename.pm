@@ -104,7 +104,7 @@ sub rename_stor_prefix {
     '/bin/bash');
   auth_group_write($auth_group_file, $group, $gid, $user);
 
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$tmpdir/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -144,7 +144,7 @@ sub rename_stor_prefix {
 
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
-<Directory $home_dir>
+<Directory />
   RenamePrefix \"#.\"
 </Directory>
 EOC
@@ -188,6 +188,12 @@ EOC
       my $resp_code = $client->response_code();
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      if ($^O eq 'darwin') {
+        # MacOSX hack
+        $test_file = '/private' . $test_file;
+        $renamed_file = '/private' . $renamed_file;
+      }
 
       $self->assert(-f $test_file,
         test_msg("File $test_file does not exist as expected"));
@@ -304,7 +310,7 @@ sub rename_stor_suffix {
 
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
-<Directory $home_dir>
+<Directory />
   RenameSuffix \".#\"
 </Directory>
 EOC
@@ -348,6 +354,12 @@ EOC
       my $resp_code = $client->response_code();
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      if ($^O eq 'darwin') {
+        # MacOSX hack
+        $test_file = '/private' . $test_file;
+        $renamed_file = '/private' . $renamed_file;
+      }
 
       $self->assert(-f $test_file,
         test_msg("File $test_file does not exist as expected"));
@@ -477,7 +489,7 @@ sub rename_stor_filter_regex {
 
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
-<Directory $home_dir>
+<Directory />
   RenamePrefix \"#.\"
   RenameFilter foo\.
 </Directory>
@@ -535,6 +547,14 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      if ($^O eq 'darwin') {
+        # MacOSX hack
+        $test_file1 = '/private' . $test_file1;
+        $test_file2 = '/private' . $test_file2;
+        $renamed_file1 = '/private' . $renamed_file1;
+        $renamed_file2 = '/private' . $renamed_file2;
+      }
 
       $self->assert(-f $test_file1,
         test_msg("File $test_file1 does not exist as expected"));
@@ -670,7 +690,7 @@ sub rename_stor_filter_regex_opt_ignorecase {
 
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
-<Directory $home_dir>
+<Directory />
   RenamePrefix \"#.\"
   RenameFilter FOO\. IgnoreCase
 </Directory>
@@ -728,6 +748,14 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      if ($^O eq 'darwin') {
+        # MacOSX hack
+        $test_file1 = '/private' . $test_file1;
+        $test_file2 = '/private' . $test_file2;
+        $renamed_file1 = '/private' . $renamed_file1;
+        $renamed_file2 = '/private' . $renamed_file2;
+      }
 
       $self->assert(-f $test_file1,
         test_msg("File $test_file1 does not exist as expected"));
@@ -863,7 +891,7 @@ sub rename_stor_filter_duplicate {
 
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
-<Directory $home_dir>
+<Directory />
   RenamePrefix \"#.\"
   RenameFilter duplicate
 </Directory>
@@ -921,6 +949,14 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      if ($^O eq 'darwin') {
+        # MacOSX hack
+        $test_file1 = '/private' . $test_file1;
+        $test_file2 = '/private' . $test_file2;
+        $renamed_file1 = '/private' . $renamed_file1;
+        $renamed_file2 = '/private' . $renamed_file2;
+      }
 
       $self->assert(-f $test_file1,
         test_msg("File $test_file1 does not exist as expected"));
@@ -1056,7 +1092,7 @@ sub rename_stor_filter_duplicate_opt_ignorecase {
 
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
-<Directory $home_dir>
+<Directory />
   RenamePrefix \"#.\"
   RenameFilter duplicate IgnoreCase
 </Directory>
@@ -1114,6 +1150,14 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      if ($^O eq 'darwin') {
+        # MacOSX hack
+        $test_file1 = '/private' . $test_file1;
+        $test_file2 = '/private' . $test_file2;
+        $renamed_file1 = '/private' . $renamed_file1;
+        $renamed_file2 = '/private' . $renamed_file2;
+      }
 
       $self->assert(-f $test_file1,
         test_msg("File $test_file1 does not exist as expected"));
@@ -1235,6 +1279,11 @@ sub rename_stor_enable_off {
   my ($port, $config_user, $config_group) = config_write($config_file, $config);
 
   if (open(my $fh, ">> $config_file")) {
+    if ($^O eq 'darwin') {
+      # MacOSX hack
+      $home_dir = '/private' . $home_dir;
+    }
+
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
