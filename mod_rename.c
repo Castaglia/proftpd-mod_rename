@@ -1,7 +1,7 @@
 /*
  * ProFTPD: mod_rename -- a module for automatically renaming uploaded files
  *
- * Copyright (c) 2001-2014 TJ Saunders
+ * Copyright (c) 2001-2015 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,16 +21,14 @@
  * with OpenSSL, and distribute the resulting executable, without including
  * the source code for OpenSSL in the source distribution.
  *
- * This is mod_rename, contrib software for proftpd 1.2.2 and above.
+ * This is mod_rename, contrib software for proftpd 1.3.x and above.
  * For more information contact TJ Saunders <tj@castaglia.org>.
- *
- * $Id: mod_rename.c,v 1.31 2006/05/05 02:39:24 tj Exp tj $
  */
 
 #include "conf.h"
 #include "privs.h"
 
-#define MOD_RENAME_VERSION "mod_rename/0.3"
+#define MOD_RENAME_VERSION		"mod_rename/0.4"
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
@@ -44,6 +42,7 @@ static int rename_logfd = -1;
 
 /* Module variables */
 static int rename_engine = FALSE;
+static const char *trace_channel = "rename";
 
 /* Necessary prototypes
  */
@@ -115,37 +114,58 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
       /* Handle RenamePrefix/RenameSuffix max count of zero as a special
        * case, to support the deleting of files that are about to be
        * overwritten (Bug#4008).
+       *
+       * However, per Bug#4183, IF this is a resumed transfer (i.e. REST
+       * of non-zero has been issued), then we do NOT want to unlink the
+       * file.
        */
 
       if (prefix != NULL &&
           prefix_max_count == 0) {
-        rename_path = tmp_path;
 
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "[fixup]: RenamePrefix '%s' has max count %d, deleting existing "
-          "file '%s'", prefix, prefix_max_count, rename_path);
+        if (session.restart_pos == 0) {
+          rename_path = tmp_path;
 
-        if (pr_fsio_unlink(rename_path) < 0) {
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-            "error deleting '%s': %s", rename_path, strerror(errno));
+            "[fixup]: RenamePrefix '%s' has max count %d, deleting existing "
+            "file '%s'", prefix, prefix_max_count, rename_path);
+
+          if (pr_fsio_unlink(rename_path) < 0) {
+            (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+              "error deleting '%s': %s", rename_path, strerror(errno));
+          }
+
+          return rename_path;
         }
 
-        return rename_path;
+        pr_trace_msg(trace_channel, 4,
+          "RenamePrefix '%s' has max count %d, but REST %" PR_LU
+          " was issued, NOT deleting existing file '%s'", prefix,
+          prefix_max_count, (pr_off_t) session.restart_pos, rename_path);
+        return pdircat(tmp_pool, dir, file, NULL);
 
       } else if (suffix != NULL &&
                  suffix_max_count == 0) {
-        rename_path = tmp_path;
+        if (session.restart_pos == 0) {
+          rename_path = tmp_path;
 
-        (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-          "[fixup]: RenameSuffix '%s' has max count %d, deleting existing "
-          "file '%s'", suffix, suffix_max_count, rename_path);
-        
-        if (pr_fsio_unlink(rename_path) < 0) {
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-            "error deleting '%s': %s", rename_path, strerror(errno));
+            "[fixup]: RenameSuffix '%s' has max count %d, deleting existing "
+            "file '%s'", suffix, suffix_max_count, rename_path);
+        
+          if (pr_fsio_unlink(rename_path) < 0) {
+            (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
+              "error deleting '%s': %s", rename_path, strerror(errno));
+          }
+
+          return rename_path;
         }
 
-        return rename_path;
+        pr_trace_msg(trace_channel, 4,
+          "RenameSuffix '%s' has max count %d, but REST %" PR_LU
+          " was issued, NOT deleting existing file '%s'", prefix,
+          suffix_max_count, (pr_off_t) session.restart_pos, rename_path);
+        return pdircat(tmp_pool, dir, file, NULL);
       }
 
       (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
