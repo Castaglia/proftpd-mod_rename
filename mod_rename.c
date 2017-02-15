@@ -63,13 +63,16 @@ static int rename_alphasort(const void *a, const void *b) {
 }
 
 static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
-    const char *file, int isdup, char *prefix, int prefix_max_count,
+    const char *file, int isdup, char *prefix, unsigned int prefix_max_count,
     char *suffix, unsigned int suffix_max_count) {
   const char *rename_path = NULL;
 
   /* Handle ~s in the prefix/suffix strings */
   if (prefix != NULL &&
       strchr(prefix, '~')) {
+    char *tmp;
+
+    tmp = prefix;
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "[fixup] replacing ~ in RenamePrefix with '%s'", session.user);
     prefix = sreplace(tmp_pool, tmp, "~", session.user, NULL);
@@ -77,6 +80,9 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
 
   if (suffix != NULL &&
       strchr(suffix, '~')) {
+    char *tmp;
+
+    tmp = suffix;
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "[fixup] replacing ~ in RenameSuffix with '%s'", session.user);
     suffix = sreplace(tmp_pool, tmp, "~", session.user, NULL);
@@ -95,7 +101,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
       register unsigned int i = 0;
       char prefixbuf[80] = {'\0'}, suffixbuf[80] = {'\0'};
       char *tmp_path = NULL, *tmp_prefix = NULL, *tmp_suffix = NULL;
-      int max_count = INT_MAX;
+      unsigned int max_count = UINT_MAX;
 
       /* If the file does not already exist as is, we don't need to
        * use the prefix/suffix.
@@ -125,7 +131,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
           rename_path = tmp_path;
 
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-            "[fixup]: RenamePrefix '%s' has max count %d, deleting existing "
+            "[fixup]: RenamePrefix '%s' has max count %u, deleting existing "
             "file '%s'", prefix, prefix_max_count, rename_path);
 
           if (pr_fsio_unlink(rename_path) < 0) {
@@ -137,7 +143,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
         }
 
         pr_trace_msg(trace_channel, 4,
-          "RenamePrefix '%s' has max count %d, but REST %" PR_LU
+          "RenamePrefix '%s' has max count %u, but REST %" PR_LU
           " was issued, NOT deleting existing file '%s'", prefix,
           prefix_max_count, (pr_off_t) session.restart_pos, rename_path);
         return pdircat(tmp_pool, dir, file, NULL);
@@ -148,7 +154,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
           rename_path = tmp_path;
 
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
-            "[fixup]: RenameSuffix '%s' has max count %d, deleting existing "
+            "[fixup]: RenameSuffix '%s' has max count %u, deleting existing "
             "file '%s'", suffix, suffix_max_count, rename_path);
         
           if (pr_fsio_unlink(rename_path) < 0) {
@@ -160,7 +166,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
         }
 
         pr_trace_msg(trace_channel, 4,
-          "RenameSuffix '%s' has max count %d, but REST %" PR_LU
+          "RenameSuffix '%s' has max count %u, but REST %" PR_LU
           " was issued, NOT deleting existing file '%s'", prefix,
           suffix_max_count, (pr_off_t) session.restart_pos, rename_path);
         return pdircat(tmp_pool, dir, file, NULL);
@@ -685,17 +691,21 @@ MODRET set_renamefilter(cmd_rec *cmd) {
 
 /* usage: RenameLog path|"none" */
 MODRET set_renamelog(cmd_rec *cmd) {
+  char *path;
+
   CHECK_ARGS(cmd, 1);
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
 
+  path = cmd->argv[1];
+
   /* Check for non-absolute paths */
-  if (strncasecmp(cmd->argv[1], "none", 5) != 0 &&
-      *(cmd->argv[1]) != '/') {
-    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, (char *) cmd->argv[0],
-      ": absolute path required", NULL));
+  if (strncasecmp(path, "none", 5) != 0 &&
+      *path != '/') {
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "absolute path required: ", path,
+      NULL));
   }
 
-  add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
+  add_config_param_str(cmd->argv[0], 1, path);
   return PR_HANDLED(cmd);
 }
 
