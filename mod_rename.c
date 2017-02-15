@@ -1,7 +1,6 @@
 /*
  * ProFTPD: mod_rename -- a module for automatically renaming uploaded files
- *
- * Copyright (c) 2001-2015 TJ Saunders
+ * Copyright (c) 2001-2017 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -65,27 +64,26 @@ static int rename_alphasort(const void *a, const void *b) {
 
 static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
     const char *file, int isdup, char *prefix, int prefix_max_count,
-    char *suffix, int suffix_max_count) {
+    char *suffix, unsigned int suffix_max_count) {
   const char *rename_path = NULL;
 
   /* Handle ~s in the prefix/suffix strings */
-  if (prefix &&
+  if (prefix != NULL &&
       strchr(prefix, '~')) {
-    char *tmp = prefix;
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "[fixup] replacing ~ in RenamePrefix with '%s'", session.user);
     prefix = sreplace(tmp_pool, tmp, "~", session.user, NULL);
   }
 
-  if (suffix &&
+  if (suffix != NULL &&
       strchr(suffix, '~')) {
-    char *tmp = suffix;
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "[fixup] replacing ~ in RenameSuffix with '%s'", session.user);
     suffix = sreplace(tmp_pool, tmp, "~", session.user, NULL);
   }
 
-  if (prefix || suffix) {
+  if (prefix != NULL ||
+      suffix != NULL) {
     unsigned char prefix_hasnumtok =
       ((prefix && strchr(prefix, '#')) ? TRUE : FALSE);
     unsigned char suffix_hasnumtok =
@@ -693,8 +691,8 @@ MODRET set_renamelog(cmd_rec *cmd) {
   /* Check for non-absolute paths */
   if (strncasecmp(cmd->argv[1], "none", 5) != 0 &&
       *(cmd->argv[1]) != '/') {
-    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, cmd->argv[0], ": absolute path "
-      "required", NULL));
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, (char *) cmd->argv[0],
+      ": absolute path required", NULL));
   }
 
   add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
