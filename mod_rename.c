@@ -75,7 +75,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
     tmp = prefix;
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "[fixup] replacing ~ in RenamePrefix with '%s'", session.user);
-    prefix = sreplace(tmp_pool, tmp, "~", session.user, NULL);
+    prefix = (char *) sreplace(tmp_pool, tmp, "~", session.user, NULL);
   }
 
   if (suffix != NULL &&
@@ -85,7 +85,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
     tmp = suffix;
     (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
       "[fixup] replacing ~ in RenameSuffix with '%s'", session.user);
-    suffix = sreplace(tmp_pool, tmp, "~", session.user, NULL);
+    suffix = (char *) sreplace(tmp_pool, tmp, "~", session.user, NULL);
   }
 
   if (prefix != NULL ||
@@ -187,7 +187,8 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
         if (prefix_hasnumtok) {
           memset(prefixbuf, '\0', sizeof(prefixbuf));
           snprintf(prefixbuf, sizeof(prefixbuf)-1, "%u", i);
-          tmp_prefix = sreplace(tmp_pool, prefix, "#", prefixbuf, NULL);
+          tmp_prefix = (char *) sreplace(tmp_pool, prefix, "#", prefixbuf,
+            NULL);
 
         } else {
           tmp_prefix = prefix;
@@ -196,7 +197,8 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
         if (suffix_hasnumtok) {
           memset(suffixbuf, '\0', sizeof(suffixbuf));
           snprintf(suffixbuf, sizeof(suffixbuf)-1, "%u", i);
-          tmp_suffix = sreplace(tmp_pool, suffix, "#", suffixbuf, NULL);
+          tmp_suffix = (char *) sreplace(tmp_pool, suffix, "#", suffixbuf,
+            NULL);
 
         } else {
           tmp_suffix = suffix;
