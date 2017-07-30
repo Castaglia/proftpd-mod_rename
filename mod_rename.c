@@ -31,7 +31,7 @@
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
-# error "ProFTPD 1.3.6rc1 or later required"
+# error "ProFTPD 1.3.4rc2 or later required"
 #endif
 
 module rename_module;
