@@ -234,12 +234,19 @@ usual steps for using third-party modules in proftpd:
 </pre>
 
 <p>
+Alternatively, if your <code>proftpd</code> was compiled with DSO support, you
+can use the <code>prxs</code> tool to build <code>mod_rename</code> as a
+shared module:
+<pre>
+  $ prxs -c -i -d mod_rename.c
+</pre>
+
+<p>
 <hr>
 <font size=2><b><i>
-&copy; Copyright 2000-2017 TJ Saunders<br>
+&copy; Copyright 2000-2021 TJ Saunders<br>
  All Rights Reserved<br>
 </i></b></font>
 <hr>
 </body>
 </html>
-
