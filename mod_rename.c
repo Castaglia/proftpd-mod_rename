@@ -156,7 +156,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
           (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
             "[fixup]: RenameSuffix '%s' has max count %u, deleting existing "
             "file '%s'", suffix, suffix_max_count, rename_path);
-        
+
           if (pr_fsio_unlink(rename_path) < 0) {
             (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
               "error deleting '%s': %s", rename_path, strerror(errno));
@@ -181,7 +181,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
       } else if (suffix_max_count > 0) {
         max_count = suffix_max_count;
       }
- 
+
       /* Yuck.  Popular among users, but...yuck. */
       for (i = 1; i < max_count; i++) {
         if (prefix_hasnumtok) {
@@ -208,7 +208,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
             suffix != NULL) {
           tmp_path = pstrcat(tmp_pool, dir, "/", tmp_prefix, file, tmp_suffix,
             NULL);
- 
+
         } else if (prefix != NULL &&
                    suffix == NULL) {
           tmp_path = pstrcat(tmp_pool, dir, "/", tmp_prefix, file, NULL);
@@ -283,20 +283,21 @@ static const char *rename_get_new_path(pool *tmp_pool, char *path,
     *rename_opts = NULL, *tmp = NULL;
   int isdup = FALSE, prefix_max_count = -1, suffix_max_count = -1, res;
 
-#ifdef PR_USE_REGEX
+#if defined(PR_USE_REGEX)
   static pr_regex_t *rename_regex = NULL;
   static char *rename_filter = NULL;
 #endif
 
   /* Given the full path, find out the file name. */
   tmp = rindex(full_path, '/');
-  if (tmp)
+  if (tmp) {
     file = ++tmp;
- 
+  }
+
   (void) pr_log_writefile(rename_logfd, MOD_RENAME_VERSION,
     "testing file '%s' for rename eligibility", full_path);
 
-#ifdef PR_USE_REGEX
+#if defined(PR_USE_REGEX)
   c = find_config(CURRENT_CONF, CONF_PARAM, "RenameFilter", FALSE);
   if (c != NULL) {
     rename_filter = (char *) c->argv[1];
@@ -585,7 +586,7 @@ static int rename_scandir(const char *dir, struct dirent ***namelist,
   if (comparer != NULL) {
     qsort((void *) (*namelist), i, sizeof(struct dirent *), comparer);
   }
- 
+
   return i;
 }
 
@@ -627,8 +628,8 @@ MODRET set_renameengine(cmd_rec *cmd) {
 
   /* Check for duplicates */
   if (get_param_ptr(cmd->server->conf, cmd->argv[0], FALSE) != NULL) {
-    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, cmd->argv[0], ": multiple "     
-     "instances not allowed for same server", NULL));
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, cmd->argv[0], ": multiple "
+      "instances not allowed for same server", NULL));
   }
 
   c = add_config_param(cmd->argv[0], 1, NULL);
@@ -640,7 +641,7 @@ MODRET set_renameengine(cmd_rec *cmd) {
 
 /* usage: RenameFilter pattern|"duplicate" [opts] */
 MODRET set_renamefilter(cmd_rec *cmd) {
-#ifdef PR_USE_REGEX
+#if defined(PR_USE_REGEX)
   config_rec *c = NULL;
   pr_regex_t *pre = NULL;
   int reg_cflags = REG_EXTENDED|REG_NOSUB;
@@ -656,12 +657,12 @@ MODRET set_renamefilter(cmd_rec *cmd) {
 
   if (strcmp(cmd->argv[1], "duplicate") != 0&&
       strcmp(cmd->argv[1], "none") != 0) {
-   
+
     if (cmd->argc-1 == 2 &&
         strcasecmp(cmd->argv[2], "IgnoreCase") == 0) {
       reg_cflags |= REG_ICASE;
     }
- 
+
     res = pr_regexp_compile(pre, cmd->argv[1], reg_cflags);
     if (res != 0) {
       char errstr[200] = {'\0'};
