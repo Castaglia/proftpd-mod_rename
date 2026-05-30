@@ -144,7 +144,7 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
         pr_trace_msg(trace_channel, 4,
           "RenamePrefix '%s' has max count %u, but REST %" PR_LU
           " was issued, NOT deleting existing file '%s'", prefix,
-          prefix_max_count, (pr_off_t) session.restart_pos, rename_path);
+          prefix_max_count, (pr_off_t) session.restart_pos, tmp_path);
         return pdircat(tmp_pool, dir, file, NULL);
 
       } else if (suffix != NULL &&
@@ -166,8 +166,8 @@ static const char *rename_fixup_path(pool *tmp_pool, const char *dir,
 
         pr_trace_msg(trace_channel, 4,
           "RenameSuffix '%s' has max count %u, but REST %" PR_LU
-          " was issued, NOT deleting existing file '%s'", prefix,
-          suffix_max_count, (pr_off_t) session.restart_pos, rename_path);
+          " was issued, NOT deleting existing file '%s'", suffix,
+          suffix_max_count, (pr_off_t) session.restart_pos, tmp_path);
         return pdircat(tmp_pool, dir, file, NULL);
       }
 
