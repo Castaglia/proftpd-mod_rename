@@ -101,22 +101,7 @@ sub list_tests {
 sub rename_stor_prefix {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
+  my $setup = test_setup($tmpdir, 'rename');
 
   my $test_file = File::Spec->rel2abs("$tmpdir/test.txt");
   if (open(my $fh, "> $test_file")) {
@@ -129,31 +114,28 @@ sub rename_stor_prefix {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/1.test.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -165,14 +147,15 @@ sub rename_stor_prefix {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
@@ -180,11 +163,11 @@ sub rename_stor_prefix {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -202,8 +185,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -219,6 +205,8 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file = '/private' . $test_file;
@@ -231,7 +219,6 @@ EOC
       $self->assert(-f $renamed_file,
         test_msg("File $renamed_file does not exist as expected"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -240,7 +227,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -250,41 +237,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_suffix {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$setup->{home_dir}/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -295,31 +259,28 @@ sub rename_stor_suffix {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/test.txt.1");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -331,14 +292,15 @@ sub rename_stor_suffix {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenameSuffix \".#\"
@@ -346,11 +308,11 @@ sub rename_stor_suffix {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -368,8 +330,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -385,6 +350,8 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file = '/private' . $test_file;
@@ -397,7 +364,6 @@ EOC
       $self->assert(-f $renamed_file,
         test_msg("File $renamed_file does not exist as expected"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -406,7 +372,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -416,41 +382,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_filter_regex {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file1 = File::Spec->rel2abs("$home_dir/foo.txt");
+  my $test_file1 = File::Spec->rel2abs("$setup->{home_dir}/foo.txt");
   if (open(my $fh, "> $test_file1")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -461,7 +404,7 @@ sub rename_stor_filter_regex {
     die("Can't open $test_file1: $!");
   }
 
-  my $test_file2 = File::Spec->rel2abs("$home_dir/bar.txt");
+  my $test_file2 = File::Spec->rel2abs("$setup->{home_dir}/bar.txt");
   if (open(my $fh, "> $test_file2")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -472,32 +415,29 @@ sub rename_stor_filter_regex {
     die("Can't open $test_file2: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file1, $test_file2)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file1, $test_file2)) {
+      die("Can't set perms on $test_file1 to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file1, $test_file2)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file1, $test_file2)) {
+      die("Can't set owner of $test_file1 to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file1 = File::Spec->rel2abs("$tmpdir/1.foo.txt");
   my $renamed_file2 = File::Spec->rel2abs("$tmpdir/1.bar.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -509,14 +449,15 @@ sub rename_stor_filter_regex {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
@@ -525,11 +466,11 @@ sub rename_stor_filter_regex {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -547,8 +488,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("foo.txt");
       unless ($conn) {
@@ -577,6 +521,8 @@ EOC
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file1 = '/private' . $test_file1;
@@ -597,7 +543,6 @@ EOC
       $self->assert(!-f $renamed_file2,
         test_msg("File $renamed_file2 exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -606,7 +551,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -616,41 +561,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_filter_regex_opt_ignorecase {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file1 = File::Spec->rel2abs("$home_dir/foo.txt");
+  my $test_file1 = File::Spec->rel2abs("$setup->{home_dir}/foo.txt");
   if (open(my $fh, "> $test_file1")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -661,7 +583,7 @@ sub rename_stor_filter_regex_opt_ignorecase {
     die("Can't open $test_file1: $!");
   }
 
-  my $test_file2 = File::Spec->rel2abs("$home_dir/bar.txt");
+  my $test_file2 = File::Spec->rel2abs("$setup->{home_dir}/bar.txt");
   if (open(my $fh, "> $test_file2")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -672,32 +594,29 @@ sub rename_stor_filter_regex_opt_ignorecase {
     die("Can't open $test_file2: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file1, $test_file2)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file1, $test_file2)) {
+      die("Can't set perms on $test_file1 to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file1, $test_file2)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file1, $test_file2)) {
+      die("Can't set owner of $test_file1 to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file1 = File::Spec->rel2abs("$tmpdir/1.foo.txt");
   my $renamed_file2 = File::Spec->rel2abs("$tmpdir/1.bar.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -709,14 +628,15 @@ sub rename_stor_filter_regex_opt_ignorecase {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
@@ -725,11 +645,11 @@ sub rename_stor_filter_regex_opt_ignorecase {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -747,8 +667,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("foo.txt");
       unless ($conn) {
@@ -776,6 +699,8 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      $client->quit();
 
       if ($^O eq 'darwin') {
         # MacOSX hack
@@ -797,7 +722,6 @@ EOC
       $self->assert(!-f $renamed_file2,
         test_msg("File $renamed_file2 exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -806,7 +730,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -816,57 +740,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_filter_duplicate {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
-
-  my $test_file1 = File::Spec->rel2abs("$home_dir/foo.txt");
+  my $test_file1 = File::Spec->rel2abs("$setup->{home_dir}/foo.txt");
   if (open(my $fh, "> $test_file1")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -879,7 +764,7 @@ sub rename_stor_filter_duplicate {
 
   my $renamed_file1 = File::Spec->rel2abs("$tmpdir/1.foo.txt");
 
-  my $test_file2 = File::Spec->rel2abs("$home_dir/bar.txt");
+  my $test_file2 = File::Spec->rel2abs("$setup->{home_dir}/bar.txt");
   if (open(my $fh, "> $test_file2")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -892,13 +777,26 @@ sub rename_stor_filter_duplicate {
 
   my $renamed_file2 = File::Spec->rel2abs("$tmpdir/1.bar.txt");
 
-  my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+  if ($< == 0) {
+    unless (chmod(0755, $test_file1, $test_file2)) {
+      die("Can't set perms on $test_file1 to 0755: $!");
+    }
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file1, $test_file2)) {
+      die("Can't set owner of $test_file1 to $setup->{uid}/$setup->{gid}: $!");
+    }
+  }
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -910,14 +808,15 @@ sub rename_stor_filter_duplicate {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
@@ -926,11 +825,11 @@ sub rename_stor_filter_duplicate {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -948,8 +847,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("foo.txt");
       unless ($conn) {
@@ -977,6 +879,8 @@ EOC
       $resp_code = $client->response_code();
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      $client->quit();
 
       if ($^O eq 'darwin') {
         # MacOSX hack
@@ -998,7 +902,6 @@ EOC
       $self->assert(-f $renamed_file2,
         test_msg("File $renamed_file2 does not exist as expected"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1007,7 +910,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -1017,57 +920,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_filter_duplicate_opt_ignorecase {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
-
-  my $test_file1 = File::Spec->rel2abs("$home_dir/foo.txt");
+  my $test_file1 = File::Spec->rel2abs("$setup->{home_dir}/foo.txt");
   if (open(my $fh, "> $test_file1")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -1080,7 +944,7 @@ sub rename_stor_filter_duplicate_opt_ignorecase {
 
   my $renamed_file1 = File::Spec->rel2abs("$tmpdir/1.FOO.txt");
 
-  my $test_file2 = File::Spec->rel2abs("$home_dir/bar.txt");
+  my $test_file2 = File::Spec->rel2abs("$setup->{home_dir}/bar.txt");
   if (open(my $fh, "> $test_file2")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -1093,13 +957,26 @@ sub rename_stor_filter_duplicate_opt_ignorecase {
 
   my $renamed_file2 = File::Spec->rel2abs("$tmpdir/1.bar.TxT");
 
-  my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+  if ($< == 0) {
+    unless (chmod(0755, $test_file1, $test_file2)) {
+      die("Can't set perms on $test_file1 to 0755: $!");
+    }
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file1, $test_file2)) {
+      die("Can't set owner of $test_file1 to $setup->{uid}/$setup->{gid}: $!");
+    }
+  }
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -1111,14 +988,15 @@ sub rename_stor_filter_duplicate_opt_ignorecase {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
@@ -1127,11 +1005,11 @@ sub rename_stor_filter_duplicate_opt_ignorecase {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1149,8 +1027,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("FOO.txt");
       unless ($conn) {
@@ -1179,6 +1060,8 @@ EOC
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file1 = '/private' . $test_file1;
@@ -1199,7 +1082,6 @@ EOC
       $self->assert(-f $renamed_file2,
         test_msg("File $renamed_file2 does not exist as expected"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1208,7 +1090,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -1218,41 +1100,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_enable_off {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$setup->{home_dir}/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -1263,31 +1122,28 @@ sub rename_stor_enable_off {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/1.test.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -1299,14 +1155,17 @@ sub rename_stor_enable_off {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
+    my $home_dir = $setup->{home_dir};
+
     if ($^O eq 'darwin') {
       # MacOSX hack
       $home_dir = '/private' . $home_dir;
@@ -1323,11 +1182,11 @@ sub rename_stor_enable_off {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1345,8 +1204,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -1362,13 +1224,14 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       $self->assert(-f $test_file,
         test_msg("File $test_file does not exist as expected"));
 
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1377,7 +1240,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -1387,41 +1250,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_enable_off_ftpaccess {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$setup->{home_dir}/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -1432,21 +1272,15 @@ sub rename_stor_enable_off_ftpaccess {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/1.test.txt");
 
@@ -1464,12 +1298,15 @@ EOC
   }
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverride => 'on',
     AllowOverwrite => 'on',
@@ -1482,14 +1319,15 @@ EOC
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\"
@@ -1497,11 +1335,11 @@ EOC
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1519,8 +1357,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -1536,13 +1377,14 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       $self->assert(-f $test_file,
         test_msg("File $test_file does not exist as expected"));
 
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1551,7 +1393,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -1561,39 +1403,16 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_prefix_max_count_zero {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
+  my $setup = test_setup($tmpdir, 'rename');
 
   my $test_file = File::Spec->rel2abs("$tmpdir/test.txt");
   if (open(my $fh, "> $test_file")) {
@@ -1606,31 +1425,28 @@ sub rename_stor_prefix_max_count_zero {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/1.test.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -1642,14 +1458,15 @@ sub rename_stor_prefix_max_count_zero {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\" max 0
@@ -1657,11 +1474,11 @@ sub rename_stor_prefix_max_count_zero {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1679,8 +1496,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -1695,6 +1515,8 @@ EOC
       my $resp_code = $client->response_code();
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      $client->quit();
 
       if ($^O eq 'darwin') {
         # MacOSX hack
@@ -1708,7 +1530,6 @@ EOC
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1717,7 +1538,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -1727,39 +1548,16 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_prefix_max_count_zero_chrooted {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
+  my $setup = test_setup($tmpdir, 'rename');
 
   my $test_file = File::Spec->rel2abs("$tmpdir/test.txt");
   if (open(my $fh, "> $test_file")) {
@@ -1772,31 +1570,28 @@ sub rename_stor_prefix_max_count_zero_chrooted {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/1.test.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -1809,14 +1604,15 @@ sub rename_stor_prefix_max_count_zero_chrooted {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\" max 0
@@ -1824,11 +1620,11 @@ sub rename_stor_prefix_max_count_zero_chrooted {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -1846,8 +1642,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -1863,6 +1662,8 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file = '/private' . $test_file;
@@ -1875,7 +1676,6 @@ EOC
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -1884,7 +1684,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -1894,66 +1694,30 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_prefix_max_count_zero_chrooted_multi_uploads {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
-
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
-  if ($< == 0) {
-    unless (chmod(0755, $home_dir)) {
-      die("Can't set perms on $home_dir to 0755: $!");
-    }
-
-    unless (chown($uid, $gid, $home_dir)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
-    }
-  }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
+  my $setup = test_setup($tmpdir, 'rename');
 
   my $test_file = File::Spec->rel2abs("$tmpdir/test.txt");
   my $renamed_file = File::Spec->rel2abs("$tmpdir/1.test.txt");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -1966,14 +1730,15 @@ sub rename_stor_prefix_max_count_zero_chrooted_multi_uploads {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenamePrefix \"#.\" max 0
@@ -1981,11 +1746,11 @@ sub rename_stor_prefix_max_count_zero_chrooted_multi_uploads {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -2003,8 +1768,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       if ($^O eq 'darwin') {
         # MacOSX hack
@@ -2013,8 +1781,6 @@ EOC
       }
 
       # Upload the same file three times in a row
-      my $prev_ino;
-
       for (my $i = 0; $i < 3; $i++) {
         my $conn = $client->stor_raw("test.txt");
         unless ($conn) {
@@ -2033,23 +1799,12 @@ EOC
         $self->assert(-f $test_file,
           test_msg("File $test_file does not exist as expected"));
 
-        if ($prev_ino) {
-          my $curr_ino = (stat($test_file))[1];
-
-          $self->assert($prev_ino != $curr_ino,
-            test_msg("Expected different inode number than $prev_ino for $test_file, got $curr_ino"));
-
-        } else {
-          $prev_ino = (stat($test_file))[1];
-        }
-
         $self->assert(!-f $renamed_file,
           test_msg("File $renamed_file exists unexpectedly"));
       }
 
       $client->quit();
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -2058,7 +1813,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -2068,41 +1823,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_suffix_max_count_zero {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$setup->{home_dir}/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -2113,31 +1845,28 @@ sub rename_stor_suffix_max_count_zero {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/test.txt.1");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -2149,14 +1878,15 @@ sub rename_stor_suffix_max_count_zero {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenameSuffix \".#\" max 0
@@ -2164,11 +1894,11 @@ sub rename_stor_suffix_max_count_zero {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -2186,8 +1916,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -2203,6 +1936,8 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file = '/private' . $test_file;
@@ -2215,7 +1950,6 @@ EOC
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -2224,7 +1958,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -2234,41 +1968,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_suffix_max_count_zero_chrooted {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$setup->{home_dir}/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -2279,31 +1990,28 @@ sub rename_stor_suffix_max_count_zero_chrooted {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/test.txt.1");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -2316,14 +2024,15 @@ sub rename_stor_suffix_max_count_zero_chrooted {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenameSuffix \".#\" max 0
@@ -2331,11 +2040,11 @@ sub rename_stor_suffix_max_count_zero_chrooted {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -2353,8 +2062,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
 
       my $conn = $client->stor_raw("test.txt");
       unless ($conn) {
@@ -2370,6 +2082,8 @@ EOC
       my $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file = '/private' . $test_file;
@@ -2382,7 +2096,6 @@ EOC
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -2391,7 +2104,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -2401,41 +2114,18 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 sub rename_stor_suffix_max_count_zero_resumed_upload_bug4183 {
   my $self = shift;
   my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'rename');
 
-  my $config_file = "$tmpdir/rename.conf";
-  my $pid_file = File::Spec->rel2abs("$tmpdir/rename.pid");
-  my $scoreboard_file = File::Spec->rel2abs("$tmpdir/rename.scoreboard");
-
-  my $log_file = test_get_logfile();
-
-  my $auth_user_file = File::Spec->rel2abs("$tmpdir/rename.passwd");
-  my $auth_group_file = File::Spec->rel2abs("$tmpdir/rename.group");
-
-  my $user = 'proftpd';
-  my $passwd = 'test';
-  my $group = 'ftpd';
-  my $home_dir = File::Spec->rel2abs($tmpdir);
-  my $uid = 500;
-  my $gid = 500;
-
-  my $test_file = File::Spec->rel2abs("$home_dir/test.txt");
+  my $test_file = File::Spec->rel2abs("$setup->{home_dir}/test.txt");
   if (open(my $fh, "> $test_file")) {
     print $fh "Hello, World!\n";
     unless (close($fh)) {
@@ -2446,31 +2136,28 @@ sub rename_stor_suffix_max_count_zero_resumed_upload_bug4183 {
     die("Can't open $test_file: $!");
   }
 
-  # Make sure that, if we're running as root, that the home directory has
-  # permissions/privs set for the account we create
   if ($< == 0) {
-    unless (chmod(0755, $home_dir, $test_file)) {
-      die("Can't set perms on $home_dir to 0755: $!");
+    unless (chmod(0755, $test_file)) {
+      die("Can't set perms on $test_file to 0755: $!");
     }
 
-    unless (chown($uid, $gid, $home_dir, $test_file)) {
-      die("Can't set owner of $home_dir to $uid/$gid: $!");
+    unless (chown($setup->{uid}, $setup->{gid}, $test_file)) {
+      die("Can't set owner of $test_file to $setup->{uid}/$setup->{gid}: $!");
     }
   }
-
-  auth_user_write($auth_user_file, $user, $passwd, $uid, $gid, $home_dir,
-    '/bin/bash');
-  auth_group_write($auth_group_file, $group, $gid, $user);
 
   my $renamed_file = File::Spec->rel2abs("$tmpdir/test.txt.1");
 
   my $config = {
-    PidFile => $pid_file,
-    ScoreboardFile => $scoreboard_file,
-    SystemLog => $log_file,
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'rename:20',
 
-    AuthUserFile => $auth_user_file,
-    AuthGroupFile => $auth_group_file,
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     AllowOverwrite => 'on',
     AllowStoreRestart => 'on',
@@ -2482,14 +2169,15 @@ sub rename_stor_suffix_max_count_zero_resumed_upload_bug4183 {
 
       'mod_rename.c' => {
         RenameEngine => 'on',
-        RenameLog => $log_file,
+        RenameLog => $setup->{log_file},
       },
     },
   };
 
-  my ($port, $config_user, $config_group) = config_write($config_file, $config);
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
 
-  if (open(my $fh, ">> $config_file")) {
+  if (open(my $fh, ">> $setup->{config_file}")) {
     print $fh <<EOC;
 <Directory />
   RenameSuffix \".#\" max 0
@@ -2497,11 +2185,11 @@ sub rename_stor_suffix_max_count_zero_resumed_upload_bug4183 {
 EOC
 
     unless (close($fh)) {
-      die("Can't write $config_file: $!");
+      die("Can't write $setup->{config_file}: $!");
     }
 
   } else {
-    die("Can't open $config_file: $!");
+    die("Can't open $setup->{config_file}: $!");
   }
 
   # Open pipes, for use between the parent and child processes.  Specifically,
@@ -2519,8 +2207,11 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
-      $client->login($user, $passwd);
+      $client->login($setup->{user}, $setup->{passwd});
       $client->type('binary');
 
       my $offset = 2;
@@ -2547,6 +2238,8 @@ EOC
       $resp_msg = $client->response_msg();
       $self->assert_transfer_ok($resp_code, $resp_msg);
 
+      $client->quit();
+
       if ($^O eq 'darwin') {
         # MacOSX hack
         $test_file = '/private' . $test_file;
@@ -2559,7 +2252,6 @@ EOC
       $self->assert(!-f $renamed_file,
         test_msg("File $renamed_file exists unexpectedly"));
     };
-
     if ($@) {
       $ex = $@;
     }
@@ -2568,7 +2260,7 @@ EOC
     $wfh->flush();
 
   } else {
-    eval { server_wait($config_file, $rfh) };
+    eval { server_wait($setup->{config_file}, $rfh) };
     if ($@) {
       warn($@);
       exit 1;
@@ -2578,18 +2270,10 @@ EOC
   }
 
   # Stop server
-  server_stop($pid_file);
-
+  server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
 
-  if ($ex) {
-    test_append_logfile($log_file, $ex);
-    unlink($log_file);
-
-    die($ex);
-  }
-
-  unlink($log_file);
+  test_cleanup($setup->{log_file}, $ex);
 }
 
 1;
