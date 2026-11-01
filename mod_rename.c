@@ -26,7 +26,7 @@
 #include "conf.h"
 #include "privs.h"
 
-#define MOD_RENAME_VERSION		"mod_rename/0.4.1"
+#define MOD_RENAME_VERSION		"mod_rename/0.4.2"
 
 /* Make sure the version of proftpd is as necessary. */
 #if PROFTPD_VERSION_NUMBER < 0x0001030402
